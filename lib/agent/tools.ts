@@ -1,4 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { LLMTool } from "../llm";
 import type { EventSource, TimeRange } from "../connectors/types";
 
 /**
@@ -26,18 +26,18 @@ function rangeFromDays(fromDaysAgo: number, toDaysAgo = 0): TimeRange {
   return { from: daysAgo(fromDaysAgo), to: daysAgo(toDaysAgo - 1 + 1) };
 }
 
-export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
+export const TOOL_DEFINITIONS: LLMTool[] = [
   {
     name: "describe_schema",
     description:
       "List every event that exists in this telemetry source, how often each fires, and what properties each carries (with sample values). Call this FIRST in almost every investigation -- it is how you learn what is actually tracked instead of guessing event names.",
-    input_schema: { type: "object", properties: {} },
+    parameters: { type: "object", properties: {} },
   },
   {
     name: "metric_over_time",
     description:
       "Daily counts of one event, optionally split by a property. Use this to confirm a change is real and to find WHEN it started before asking why.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         event_name: { type: "string" },
@@ -58,7 +58,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "funnel",
     description:
       "Strict ordered funnel across event names: how many distinct users reached each step having completed all prior steps. Use this to locate WHICH stage changed rather than reasoning about a single aggregate number.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         steps: {
@@ -75,7 +75,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "compare_periods",
     description:
       "Run the same funnel over two adjacent windows (recent vs prior) and return both, so you can quantify a shift rather than assert one. Returns conversion rates and absolute user counts for each step in both periods.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         steps: { type: "array", items: { type: "string" } },
@@ -91,7 +91,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "segment_event",
     description:
       "Break one event down by one property: users and event counts per value. This is the main tool for 'why' -- segment the changed metric by every plausible property and look for the value carrying the change.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         event_name: { type: "string" },
@@ -105,7 +105,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "compare_cohorts",
     description:
       "Compare two groups of users defined by an event each did (e.g. users who reached the boss vs users who did not) and return how differently each group fires every other event, as per-user averages. This is how you find behavioural differences between successful and unsuccessful users.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         cohort_a_event: {
@@ -126,7 +126,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "aggregate",
     description:
       "Flexible grouped aggregate over one event: count events/users, or average/sum a numeric property, grouped by a property with optional numeric bucketing. Use bucket_size to turn a continuous property (like a position) into a histogram.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         event_name: { type: "string" },
@@ -153,7 +153,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "user_timeline",
     description:
       "Every event for one user in order. Use sparingly, to sanity-check a hypothesis against what one real session actually looked like.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: { user_id: { type: "string" } },
       required: ["user_id"],
@@ -163,7 +163,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: "check_significance",
     description:
       "Two-proportion check: given successes and totals for two periods, returns the absolute change, relative change, and whether the sample is large enough to conclude anything. ALWAYS call this before claiming a metric moved -- with small n, an apparent swing is usually noise, and saying so is a valid and important finding.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         before_successes: { type: "number" },

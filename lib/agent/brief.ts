@@ -1,25 +1,25 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { detectAnomalies } from "../analysis/anomalies";
 import { computeOverview } from "../analysis/metrics";
 import { getSource } from "../connectors/registry";
-import { mimirDb } from "../db";
+import { getProvider } from "../llm";
+import { store } from "../store";
 import { BRIEF_SYSTEM_PROMPT } from "./prompts";
 import { runInvestigation } from "./runner";
 
 /**
  * The morning brief.
  *
- * Deterministic metrics and anomaly detection run first, in code. The model
- * only writes the prose summary over numbers it was handed -- it never
- * computes them. That keeps the daily number you read from drifting because
- * of a model's arithmetic, and keeps the brief cheap.
+ * Metrics and anomaly detection run first, in code. The model only writes
+ * prose over numbers it was handed -- it never computes them. That keeps the
+ * figure you read every morning from drifting because of a model's
+ * arithmetic, and keeps a daily run to a single cheap call.
  *
- * If a genuinely meaningful anomaly is found, a full investigation is kicked
- * off automatically so the "why" is already waiting when you open the app.
+ * A full investigation is started only when something cleared the volume
+ * floor, so a quiet day costs one request and nothing else.
  */
 export async function generateMorningBrief(sourceId: string) {
   const source = getSource(sourceId);
-  const db = mimirDb();
+  const db = store();
 
   const [overview, anomalies] = await Promise.all([
     computeOverview(source),
@@ -27,10 +27,6 @@ export async function generateMorningBrief(sourceId: string) {
   ]);
 
   const meaningful = anomalies.filter((a) => a.meaningful);
-
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-  const anthropic = new Anthropic({ apiKey });
 
   const facts = {
     source: source.displayName,
@@ -45,45 +41,38 @@ export async function generateMorningBrief(sourceId: string) {
     anomalies_detected: anomalies,
     note_on_scale:
       overview.totalUsers < 50
-        ? "This product has very few users so far. Week-over-week swings are usually noise. Say so plainly rather than reporting them as news."
+        ? "This product has very few users. Week-over-week swings are usually noise; say so plainly rather than reporting them as news."
         : null,
   };
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-5",
-    max_tokens: 1024,
+  const provider = getProvider();
+  const response = await provider.complete({
     system: BRIEF_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: JSON.stringify(facts, null, 2) }],
+    messages: [{ role: "user", text: JSON.stringify(facts, null, 2) }],
+    maxTokens: 1024,
   });
 
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-
-  const fenced = text.match(/```json\s*([\s\S]*?)```/);
   let parsed: { headline: string; body: string };
+  const fenced = response.text.match(/```(?:json)?\s*([\s\S]*?)```/);
   try {
-    parsed = JSON.parse((fenced ? fenced[1] : text).trim());
+    parsed = JSON.parse((fenced ? fenced[1] : response.text).trim());
   } catch {
-    parsed = { headline: "Brief generated", body: text.slice(0, 800) };
+    parsed = {
+      headline: "Brief generated",
+      body: response.text.slice(0, 800),
+    };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  await db.query(
-    `INSERT INTO briefs (source_id, brief_date, headline, body, metrics)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (source_id, brief_date)
-     DO UPDATE SET headline = EXCLUDED.headline,
-                   body = EXCLUDED.body,
-                   metrics = EXCLUDED.metrics,
-                   created_at = now()`,
-    [sourceId, today, parsed.headline, parsed.body, JSON.stringify(facts)],
-  );
+  await db.saveBrief({
+    source_id: sourceId,
+    brief_date: new Date().toISOString().slice(0, 10),
+    headline: parsed.headline,
+    body: parsed.body,
+    metrics: facts,
+  });
 
-  // Only chase a cause when there is a real change to chase. This is the
-  // autonomous half: by the time you read the brief, the investigation of
-  // the thing it flagged has already run.
+  // The autonomous half: by the time the brief is read, the investigation
+  // into what it flagged has already run.
   let triggeredInvestigation: number | null = null;
   if (meaningful.length > 0) {
     const top = meaningful[0];

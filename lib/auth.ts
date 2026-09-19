@@ -11,8 +11,15 @@
  */
 export function checkAccess(request: Request): { ok: boolean; error?: string } {
   const expected = process.env.MIMIR_ACCESS_KEY;
+
+  // Unset means open on localhost and closed in production. Running `npm run
+  // dev` should not require inventing a password, but a deployed instance
+  // that forgot to set one must not be left serving another product's
+  // behavioural data to the internet.
   if (!expected) {
-    return { ok: false, error: "mimir_not_configured" };
+    return process.env.NODE_ENV === "production"
+      ? { ok: false, error: "mimir_access_key_not_set" }
+      : { ok: true };
   }
 
   const url = new URL(request.url);

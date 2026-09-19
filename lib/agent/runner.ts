@@ -1,21 +1,24 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { getSource } from "../connectors/registry";
-import { mimirDb } from "../db";
+import { getProvider } from "../llm";
+import type { LLMMessage, LLMToolResult } from "../llm";
+import { store } from "../store";
 import { INVESTIGATION_SYSTEM_PROMPT } from "./prompts";
 import { executeTool, TOOL_DEFINITIONS } from "./tools";
 
 /**
  * The agentic loop.
  *
- * Claude picks a tool, we run it against the connected source, hand back the
- * result, and repeat until it stops asking for tools and returns its verdict.
- * Every step is persisted as it happens, so an investigation that fails
- * halfway still shows how far it got -- and so the UI can show the reasoning
- * trail rather than just a conclusion the user has to take on faith.
+ * The model picks a tool, we run it against the connected source, hand the
+ * result back, and repeat until it stops asking and gives a verdict. Every
+ * step is written to the store as it happens, so an investigation that dies
+ * halfway still shows how far it got, and the UI can replay the reasoning
+ * instead of presenting a conclusion to be taken on trust.
+ *
+ * Nothing here names a vendor: the loop talks to an LLMProvider, so it runs
+ * identically on a free Gemini key, a free Groq key or a local Ollama.
  */
 
-const MODEL = "claude-sonnet-5";
-const MAX_STEPS = 24; // generous: a real investigation is 8-15 calls
+const MAX_TURNS = 20;
 const MAX_TOKENS = 4096;
 
 export interface InvestigationResult {
@@ -26,48 +29,25 @@ export interface InvestigationResult {
   confidence: string;
   insights: any[];
   experiment: any | null;
+  modelLabel: string;
 }
 
-function client(): Anthropic {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-  return new Anthropic({ apiKey });
-}
-
-async function recordStep(
-  investigationId: number,
-  stepIndex: number,
-  kind: string,
-  fields: {
-    toolName?: string;
-    toolInput?: unknown;
-    content?: string;
-    result?: unknown;
-  } = {},
-) {
-  await mimirDb().query(
-    `INSERT INTO investigation_steps
-       (investigation_id, step_index, kind, tool_name, tool_input, content, result)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [
-      investigationId,
-      stepIndex,
-      kind,
-      fields.toolName ?? null,
-      fields.toolInput ? JSON.stringify(fields.toolInput) : null,
-      fields.content ?? null,
-      fields.result ? JSON.stringify(fields.result) : null,
-    ],
-  );
-}
-
-/** Pull the JSON verdict out of the final message. */
 function parseVerdict(text: string): any | null {
-  const fenced = text.match(/```json\s*([\s\S]*?)```/);
-  const raw = fenced ? fenced[1] : text;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenced ? fenced[1] : text;
   try {
-    return JSON.parse(raw.trim());
+    return JSON.parse(candidate.trim());
   } catch {
+    // Some models wrap prose around the object; take the outermost braces.
+    const first = candidate.indexOf("{");
+    const last = candidate.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      try {
+        return JSON.parse(candidate.slice(first, last + 1));
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
 }
@@ -78,167 +58,172 @@ export async function runInvestigation(opts: {
   trigger?: "ask" | "monitor";
 }): Promise<InvestigationResult> {
   const source = getSource(opts.sourceId);
-  const db = mimirDb();
+  const provider = getProvider();
+  const db = store();
 
-  const created = await db.query(
-    `INSERT INTO investigations (source_id, question, trigger, status)
-     VALUES ($1, $2, $3, 'running') RETURNING id`,
-    [opts.sourceId, opts.question, opts.trigger ?? "ask"],
-  );
-  const investigationId: number = created.rows[0].id;
+  const investigationId = await db.createInvestigation({
+    sourceId: opts.sourceId,
+    question: opts.question,
+    trigger: opts.trigger ?? "ask",
+    modelLabel: provider.label,
+  });
 
-  const anthropic = client();
-  const messages: Anthropic.MessageParam[] = [
+  const messages: LLMMessage[] = [
     {
       role: "user",
-      content: `Telemetry source: ${source.displayName} (id: ${source.id})
-
-Investigate: ${opts.question}`,
+      text: `Telemetry source: ${source.displayName} (id: ${source.id})\n\nInvestigate: ${opts.question}`,
     },
   ];
 
   let stepIndex = 0;
+  const step = (
+    kind: string,
+    fields: Partial<{
+      tool_name: string | null;
+      tool_input: unknown;
+      content: string | null;
+      result: unknown;
+      duration_ms: number | null;
+    }> = {},
+  ) =>
+    db.addStep({
+      investigation_id: investigationId,
+      step_index: stepIndex++,
+      kind,
+      tool_name: fields.tool_name ?? null,
+      tool_input: fields.tool_input ?? null,
+      content: fields.content ?? null,
+      result: fields.result ?? null,
+      duration_ms: fields.duration_ms ?? null,
+    });
 
   try {
-    for (let turn = 0; turn < MAX_STEPS; turn++) {
-      const response = await anthropic.messages.create({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
+    for (let turn = 0; turn < MAX_TURNS; turn++) {
+      const started = Date.now();
+      const response = await provider.complete({
         system: INVESTIGATION_SYSTEM_PROMPT,
-        tools: TOOL_DEFINITIONS,
         messages,
+        tools: TOOL_DEFINITIONS,
+        maxTokens: MAX_TOKENS,
       });
 
-      // Persist any narration the model produced alongside its tool calls.
-      for (const block of response.content) {
-        if (block.type === "text" && block.text.trim()) {
-          await recordStep(investigationId, stepIndex++, "thought", {
-            content: block.text,
-          });
-        }
+      if (response.text.trim() && response.toolCalls.length > 0) {
+        await step("thought", {
+          content: response.text,
+          duration_ms: Date.now() - started,
+        });
       }
 
-      const toolUses = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
-      );
-
-      // No tools requested -> this is the verdict.
-      if (toolUses.length === 0) {
-        const text = response.content
-          .filter((b): b is Anthropic.TextBlock => b.type === "text")
-          .map((b) => b.text)
-          .join("\n");
-
-        const verdict = parseVerdict(text) ?? {
-          headline: "Investigation finished without a structured verdict.",
-          summary: text.slice(0, 1000),
+      // No tools requested means the model is done: this is the verdict.
+      if (response.toolCalls.length === 0) {
+        const verdict = parseVerdict(response.text) ?? {
+          headline: "Finished without a structured verdict.",
+          summary: response.text.slice(0, 1200),
           hypothesis: "",
           confidence: "low",
           insights: [],
           experiment: null,
         };
 
-        await recordStep(investigationId, stepIndex++, "conclusion", {
-          content: verdict.summary ?? text,
+        await step("conclusion", {
+          content: verdict.summary ?? response.text,
           result: verdict,
+          duration_ms: Date.now() - started,
         });
 
-        await db.query(
-          `UPDATE investigations
-             SET status='complete', headline=$2, summary=$3,
-                 hypothesis=$4, confidence=$5, finished_at=now()
-           WHERE id=$1`,
-          [
-            investigationId,
-            verdict.headline ?? null,
-            verdict.summary ?? null,
-            verdict.hypothesis ?? null,
-            verdict.confidence ?? null,
-          ],
-        );
+        await db.finishInvestigation(investigationId, {
+          status: "complete",
+          headline: verdict.headline ?? null,
+          summary: verdict.summary ?? null,
+          hypothesis: verdict.hypothesis ?? null,
+          confidence: verdict.confidence ?? null,
+        });
 
         for (const ins of verdict.insights ?? []) {
-          await db.query(
-            `INSERT INTO insights
-               (source_id, investigation_id, headline, detail, kind, severity,
-                metric_before, metric_after, sample_size)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [
-              opts.sourceId,
-              investigationId,
-              ins.headline ?? "(untitled)",
-              ins.detail ?? "",
-              ins.kind ?? "anomaly",
-              ins.severity ?? "info",
-              ins.metric_before ?? null,
-              ins.metric_after ?? null,
-              ins.sample_size ?? null,
-            ],
-          );
+          await db.addInsight({
+            source_id: opts.sourceId,
+            investigation_id: investigationId,
+            headline: ins.headline ?? "(untitled)",
+            detail: ins.detail ?? "",
+            kind: ins.kind ?? "anomaly",
+            severity: ins.severity ?? "info",
+            metric_before: ins.metric_before ?? null,
+            metric_after: ins.metric_after ?? null,
+            sample_size: ins.sample_size ?? null,
+          });
         }
 
         if (verdict.experiment) {
           const e = verdict.experiment;
-          await db.query(
-            `INSERT INTO experiments
-               (source_id, title, hypothesis, change_described,
-                primary_metric, guardrail_metrics, status)
-             VALUES ($1,$2,$3,$4,$5,$6,'proposed')`,
-            [
-              opts.sourceId,
-              e.title ?? "(untitled)",
-              e.hypothesis ?? "",
-              e.change_described ?? "",
-              e.primary_metric ?? "",
-              JSON.stringify(e.guardrail_metrics ?? []),
-            ],
-          );
+          await db.addExperiment({
+            source_id: opts.sourceId,
+            title: e.title ?? "(untitled)",
+            hypothesis: e.hypothesis ?? "",
+            change_described: e.change_described ?? "",
+            primary_metric: e.primary_metric ?? "",
+            guardrail_metrics: e.guardrail_metrics ?? [],
+            status: "proposed",
+          });
         }
 
-        return { investigationId, ...verdict };
+        return {
+          investigationId,
+          modelLabel: provider.label,
+          headline: verdict.headline ?? "",
+          summary: verdict.summary ?? "",
+          hypothesis: verdict.hypothesis ?? "",
+          confidence: verdict.confidence ?? "low",
+          insights: verdict.insights ?? [],
+          experiment: verdict.experiment ?? null,
+        };
       }
 
-      // Run each requested tool and feed the results back.
-      messages.push({ role: "assistant", content: response.content });
-      const results: Anthropic.ToolResultBlockParam[] = [];
+      messages.push({
+        role: "assistant",
+        text: response.text,
+        toolCalls: response.toolCalls,
+      });
 
-      for (const use of toolUses) {
-        await recordStep(investigationId, stepIndex++, "tool_call", {
-          toolName: use.name,
-          toolInput: use.input,
+      const results: LLMToolResult[] = [];
+      for (const call of response.toolCalls) {
+        await step("tool_call", {
+          tool_name: call.name,
+          tool_input: call.input,
         });
 
+        const toolStarted = Date.now();
         let payload: unknown;
         let isError = false;
         try {
-          payload = await executeTool(source, use.name, use.input as any);
+          payload = await executeTool(source, call.name, call.input as any);
         } catch (err) {
           payload = { error: (err as Error).message };
           isError = true;
         }
 
-        await recordStep(investigationId, stepIndex++, "tool_result", {
-          toolName: use.name,
+        await step("tool_result", {
+          tool_name: call.name,
           result: payload,
+          duration_ms: Date.now() - toolStarted,
         });
 
         results.push({
-          type: "tool_result",
-          tool_use_id: use.id,
-          content: JSON.stringify(payload).slice(0, 60_000),
-          is_error: isError,
+          id: call.id,
+          name: call.name,
+          content: JSON.stringify(payload).slice(0, 40_000),
+          isError,
         });
       }
 
-      messages.push({ role: "user", content: results });
+      messages.push({ role: "tool_results", results });
     }
 
-    throw new Error(`investigation exceeded ${MAX_STEPS} steps without a verdict`);
+    throw new Error(`no verdict after ${MAX_TURNS} turns`);
   } catch (err) {
-    await db.query(
-      `UPDATE investigations SET status='failed', error=$2, finished_at=now() WHERE id=$1`,
-      [investigationId, (err as Error).message],
-    );
+    await db.finishInvestigation(investigationId, {
+      status: "failed",
+      error: (err as Error).message,
+    });
     throw err;
   }
 }

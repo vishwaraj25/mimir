@@ -39,6 +39,7 @@ agent or the analysis layer knows that. Everything speaks one interface:
 ```
 lib/connectors/types.ts        the EventSource contract
 lib/connectors/postgres-*.ts   a connector for any Postgres event table
+lib/connectors/demo-source.ts  a synthetic source, so it runs with no setup
 lib/connectors/registry.ts     which sources this deployment can see
 ```
 
@@ -62,6 +63,7 @@ app/                    Next.js App Router
   api/cron/morning-brief  Scheduled daily run
 
 lib/
+  llm/                  Provider-neutral tool calling (Gemini, Groq, Ollama, ...)
   agent/runner.ts       The agentic loop (tool call -> execute -> feed back)
   agent/tools.ts        What the agent can do, defined over EventSource
   agent/prompts.ts      Operating instructions, including the honesty rules
@@ -69,8 +71,15 @@ lib/
   analysis/metrics.ts   Deterministic metrics (computed in code, not by the model)
   analysis/anomalies.ts Conservative change detection with a volume floor
   connectors/           The source abstraction
-  db.ts                 Mimir's own database
+  store.ts              Mimir's own storage (Postgres, or in-memory)
 ```
+
+### Model-agnostic
+
+The agent loop is written against an `LLMProvider` interface, not a vendor
+SDK, so the same investigation runs on a free Gemini key, a free Groq key, a
+local Ollama model or a paid API -- selected by an environment variable. The
+UI always shows which model actually ran, and whether it was free.
 
 ### Two deliberate splits
 
@@ -91,29 +100,56 @@ are identifier-quoted; every value the agent chooses is a bound parameter. A
 malformed or hostile tool call can produce a bad aggregate, never an arbitrary
 statement. It should also hold a read-only database role.
 
-## Setup
+## Running it
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in the four variables
 npm run dev
 ```
 
+That is the whole setup. With no configuration at all, Mimir falls back to a
+synthetic telemetry source and in-memory storage, so every page is populated
+and explorable immediately. The synthetic product has a real regression
+buried in it — completion falls from ~65% to ~35% in the last week, caused by
+a difficulty spike at one position — which the agent has to find by
+segmenting. It is not told where to look.
+
+To run the agent you need one model key. The recommended ones are free:
+
+| Provider | Cost | Key |
+|---|---|---|
+| **Gemini** (default) | Free tier | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| **Groq** | Free tier | [console.groq.com/keys](https://console.groq.com/keys) |
+| **Ollama** | Free, local — no telemetry leaves your machine | no key |
+| OpenRouter / Anthropic | Paid | optional |
+
+```bash
+echo "GEMINI_API_KEY=your-key" > .env.local
+```
+
+Then optionally, to persist findings and connect real data:
+
 | Variable | What |
 |---|---|
-| `MIMIR_DATABASE_URL` | Mimir's own Postgres. Run `db/schema.sql` against it once. |
-| `SOURCE_NIGHT_RUN_URL` | Read-only Postgres role on the telemetry source |
-| `ANTHROPIC_API_KEY` | For the agent |
-| `MIMIR_ACCESS_KEY` | Password for the dashboard and API |
+| `MIMIR_DATABASE_URL` | Mimir's own Postgres. Run `db/schema.sql` once. Without it, storage is in-memory and resets on restart. |
+| `SOURCE_NIGHT_RUN_URL` | Read-only role on a real telemetry source. Without it, the synthetic source is used. |
+| `MIMIR_ACCESS_KEY` | Password for the API. Optional locally, **required in production**. |
 
 Deploy on Vercel. `vercel.json` registers the 06:00 daily cron for the brief.
 
 ## Cost
 
-An investigation is roughly 8–15 model calls with tool results attached.
-The morning brief is one call over pre-computed numbers, plus one
-investigation only when something genuinely moved — so a quiet day costs
-almost nothing.
+Designed to run for nothing. The default provider is Gemini's free tier, and
+the work is structured to stay inside it:
+
+- Metrics, funnels, anomaly detection and the significance test are computed
+  in code, never by the model
+- The morning brief is a single call over numbers already computed
+- An investigation runs automatically only when a change clears a volume
+  floor, so a quiet day costs one request
+
+An investigation you start by hand is roughly 8–15 calls. On a free tier that
+is still nothing; on a paid provider it would be cents.
 
 ## Status
 

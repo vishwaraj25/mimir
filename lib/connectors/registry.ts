@@ -1,3 +1,4 @@
+import { DemoEventSource } from "./demo-source";
 import { NIGHT_RUN_MAPPING, PostgresEventSource } from "./postgres-event-source";
 import type { EventSource } from "./types";
 
@@ -31,7 +32,17 @@ function build(): Map<string, EventSource> {
     );
   }
 
+  // Always available, always last. With no real source configured the app
+  // still runs end to end against this, so the UI is never an empty shell
+  // and the agent has something real to investigate on a fresh clone.
+  sources.set("demo", new DemoEventSource());
+
   return sources;
+}
+
+/** True when the only thing connected is the synthetic source. */
+export function isDemoOnly(): boolean {
+  return listSources().every((s) => s.id === "demo");
 }
 
 export function listSources(): EventSource[] {
@@ -50,13 +61,7 @@ export function getSource(id: string): EventSource {
   return source;
 }
 
-/** The source used when a request doesn't name one. */
+/** The source used when a request doesn't name one: a real one if there is one. */
 export function defaultSource(): EventSource {
-  const all = listSources();
-  if (all.length === 0) {
-    throw new Error(
-      "no telemetry sources configured -- set SOURCE_NIGHT_RUN_URL",
-    );
-  }
-  return all[0];
+  return listSources()[0];
 }

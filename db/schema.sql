@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS investigations (
     summary       TEXT,
     hypothesis    TEXT,
     confidence    TEXT,          -- 'high' | 'medium' | 'low' | 'insufficient_data'
+    -- Which model actually ran it, so a verdict can be read in the light of
+    -- what produced it -- a free 8B model and a frontier model are not the
+    -- same witness.
+    model_label   TEXT,
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
     error         TEXT
@@ -35,6 +39,7 @@ CREATE TABLE IF NOT EXISTS investigation_steps (
     tool_input       JSONB,
     content          TEXT,
     result           JSONB,
+    duration_ms      INT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

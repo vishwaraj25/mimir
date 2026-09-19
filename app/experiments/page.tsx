@@ -1,48 +1,46 @@
-import { mimirDb } from "@/lib/db";
+import { store } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default async function ExperimentsPage() {
-  let rows: any[] = [];
-  let error: string | null = null;
-  try {
-    const r = await mimirDb().query(
-      `SELECT * FROM experiments ORDER BY created_at DESC LIMIT 50`,
-    );
-    rows = r.rows;
-  } catch (err) { error = (err as Error).message; }
+  const rows = await store().listExperiments(50);
 
   return (
     <>
-      <div className="page-head">
-        <h1>Experiments</h1>
-        <p>Changes the agent proposed at the end of an investigation, each with the one metric
-           that decides it and the guardrails that say when to stop. You move the status.</p>
-      </div>
-      {error && <div className="panel"><div className="mono" style={{ color: "var(--bad)" }}>{error}</div></div>}
-      {rows.length === 0 && !error ? (
-        <div className="panel"><div className="empty">No experiments proposed yet.</div></div>
-      ) : rows.map((r) => (
-        <div className="panel" key={r.id}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-            <div style={{ fontSize: 15, fontWeight: 650 }}>{r.title}</div>
-            <span className={`badge ${r.status === "shipped" ? "good" : r.status === "rejected" ? "bad" : "accent"}`}>
-              {r.status}
-            </span>
-          </div>
-          <p style={{ color: "var(--muted)" }}>{r.hypothesis}</p>
-          <table>
-            <tbody>
-              <tr><th>Change</th><td>{r.change_described}</td></tr>
-              <tr><th>Primary metric</th><td className="mono">{r.primary_metric}</td></tr>
-              <tr><th>Guardrails</th><td className="mono">
-                {Array.isArray(r.guardrail_metrics) && r.guardrail_metrics.length
-                  ? r.guardrail_metrics.join(", ") : "none specified"}
-              </td></tr>
-            </tbody>
-          </table>
+      <header className="head">
+        <div>
+          <h1>Experiments</h1>
+          <p>Changes proposed at the end of an investigation, each with the metric that decides it
+             and the guardrails that say when to stop.</p>
         </div>
-      ))}
+      </header>
+
+      <div className="body">
+        {rows.length === 0 ? (
+          <div className="panel"><div className="empty">Nothing proposed yet.</div></div>
+        ) : rows.map((r) => (
+          <div className="panel" key={r.id}>
+            <div className="panel-head">
+              <h2>{r.title}</h2>
+              <span className={`tag ${r.status === "shipped" ? "ok" : r.status === "rejected" ? "err" : "agent"}`}>
+                {r.status}
+              </span>
+            </div>
+            <div className="panel-body flush">
+              <table>
+                <tbody>
+                  <tr><td style={{ width: 150, color: "var(--text-3)" }}>Hypothesis</td><td>{r.hypothesis}</td></tr>
+                  <tr><td style={{ color: "var(--text-3)" }}>Change</td><td>{r.change_described}</td></tr>
+                  <tr><td style={{ color: "var(--text-3)" }}>Primary metric</td><td className="mono" style={{ color: "var(--data)" }}>{r.primary_metric}</td></tr>
+                  <tr><td style={{ color: "var(--text-3)" }}>Guardrails</td><td className="mono">
+                    {Array.isArray(r.guardrail_metrics) && r.guardrail_metrics.length ? r.guardrail_metrics.join(", ") : "—"}
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
