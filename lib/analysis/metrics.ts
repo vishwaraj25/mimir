@@ -5,8 +5,8 @@ import type { EventSource, TimeRange } from "../connectors/types";
  *
  * The split matters: anything that can be computed exactly should be, so the
  * agent spends its reasoning on WHY a number moved rather than on arithmetic
- * it might get subtly wrong. The overview page and the morning brief both
- * read from here; the agent reads these same numbers through its tools.
+ * it might get subtly wrong. The overview cards and the morning brief both
+ * read from here.
  */
 
 export function daysAgo(n: number): Date {
@@ -22,13 +22,15 @@ export function lastNDays(n: number): TimeRange {
 
 export interface OverviewMetrics {
   dau: number;
+  dauPrevDay: number;
   wau: number;
+  wauPrevWeek: number;
   totalUsers: number;
   totalEvents: number;
   newUsers7d: number;
   returningUsers7d: number;
-  /** Share of users who came back on a later day than their first. */
   returnRatePct: number | null;
+  /** Daily active-user counts, oldest first -- the one series every card can trust. */
   activeByDay: { day: string; users: number }[];
   topEvents: { name: string; count: number }[];
   firstEventAt: Date | null;
@@ -39,19 +41,26 @@ export async function computeOverview(
   source: EventSource,
 ): Promise<OverviewMetrics> {
   const week = lastNDays(7);
-  const [schema, byDay28, dau, wau, newUsers7d] = await Promise.all([
-    source.describeSchema(),
-    source.activeUsersByDay(lastNDays(28)),
-    source.distinctUsers(lastNDays(1)),
-    source.distinctUsers(week),
-    source.newUsers(week),
-  ]);
+  const prevWeek: TimeRange = { from: daysAgo(14), to: daysAgo(7) };
+
+  const [schema, byDay28, dau, dauPrevDay, wau, wauPrevWeek, newUsers7d] =
+    await Promise.all([
+      source.describeSchema(),
+      source.activeUsersByDay(lastNDays(28)),
+      source.distinctUsers(lastNDays(1)),
+      source.distinctUsers({ from: daysAgo(2), to: daysAgo(1) }),
+      source.distinctUsers(week),
+      source.distinctUsers(prevWeek),
+      source.newUsers(week),
+    ]);
 
   const returningUsers7d = Math.max(0, wau - newUsers7d);
 
   return {
     dau,
+    dauPrevDay,
     wau,
+    wauPrevWeek,
     totalUsers: schema.totalUsers,
     totalEvents: schema.totalEvents,
     newUsers7d,

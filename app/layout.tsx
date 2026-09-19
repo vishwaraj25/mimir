@@ -1,9 +1,8 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import { describeProvider } from "@/lib/llm";
-import { defaultSource, isDemoOnly } from "@/lib/connectors/registry";
-import { store } from "@/lib/store";
+import { isDemoOnly } from "@/lib/connectors/registry";
+import { MimirHead } from "./components/mimir-head";
 import { NavLink } from "./nav-link";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -15,18 +14,21 @@ export const metadata: Metadata = {
     "An agentic product analyst: connects to event telemetry, investigates on its own, shows its working.",
 };
 
+// Config, connection status and model choice live on Settings only -- the
+// rest of the app is player behaviour, full stop. That split was the whole
+// point of moving off the first cut of this UI.
 const NAV = [
-  ["Monitor", [["/", "Overview"], ["/insights", "Insights"]]],
-  ["Investigate", [["/ask", "Ask"], ["/investigations", "Investigations"]]],
-  ["Act", [["/experiments", "Experiments"]]],
-  ["Source", [["/data", "Data & events"]]],
+  ["", [["/", "Home", "◆"]]],
+  ["Analytics", [
+    ["/insights", "Insights", "◇"],
+    ["/investigations", "Investigations", "▸"],
+    ["/experiments", "Experiments", "⚙"],
+  ]],
+  ["Data", [["/data", "Schema", "▦"]]],
 ] as const;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const provider = describeProvider();
   const demo = isDemoOnly();
-  const source = defaultSource();
-  const persistent = store().persistent;
 
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>
@@ -34,40 +36,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="app">
           <nav className="rail">
             <div className="rail-brand">
-              <b>Mimir</b>
-              <i>analyst</i>
+              <MimirHead size={30} />
+              <div>
+                <b>Mimir</b>
+                <i>analyst</i>
+              </div>
             </div>
 
             {NAV.map(([group, links]) => (
-              <div key={group}>
-                <div className="rail-group">{group}</div>
-                {links.map(([href, label]) => (
-                  <NavLink key={href} href={href} label={label} />
+              <div key={group || "root"}>
+                {group && <div className="rail-group">{group}</div>}
+                {links.map(([href, label, icon]) => (
+                  <NavLink key={href} href={href} label={label} icon={icon} />
                 ))}
               </div>
             ))}
 
             <div className="rail-foot">
-              <div className="k">Source</div>
-              <div className="v">
-                {source.displayName}
-                {demo && (
-                  <span className="tag warn" style={{ marginLeft: 6 }}>
-                    synthetic
-                  </span>
-                )}
-              </div>
-              <div className="k">Model</div>
-              <div className="v">
-                {provider.label}
-                {provider.configured && (
-                  <span className={`tag ${provider.free ? "ok" : "warn"}`} style={{ marginLeft: 6 }}>
-                    {provider.free ? "free" : "paid"}
-                  </span>
-                )}
-              </div>
-              <div className="k">Store</div>
-              <div className="v">{persistent ? "postgres" : "in-memory (resets)"}</div>
+              {demo && (
+                <div className="card" style={{ marginBottom: 8 }}>
+                  <span className="tag warn">synthetic data</span>
+                </div>
+              )}
+              <NavLink href="/settings" label="Settings" icon="⚬" />
             </div>
           </nav>
 

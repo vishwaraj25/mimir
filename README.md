@@ -31,6 +31,18 @@ flags anything that moved meaningfully, writes a short brief, and if something
 real changed it starts the investigation automatically, so the "why" is
 already waiting when you open it.
 
+## The interface
+
+Card-based, light, one hero action instead of a separate empty "Ask" tab:
+asking Mimir something lives at the top of Overview, right where the metrics
+it would explain already are. The Mimir head in the sidebar and in that bar
+is not decorative — its eyes light up amber for exactly as long as a real
+investigation is running, tied to the actual `busy` state, not a loop.
+
+Configuration (which source is connected, which model would run, where
+findings are stored, your access key) lives entirely on **Settings**. The
+main dashboard is player behaviour and nothing else.
+
 ## Source-agnostic by design
 
 Night Run (a browser game) is the first connected source, but nothing in the
@@ -53,12 +65,16 @@ change.
 
 ```
 app/                    Next.js App Router
-  page.tsx              Overview — metrics, what changed, today's brief
-  ask/                  Ask Analyst — run an investigation
+  page.tsx              Overview — metric cards, week-over-week, the brief
+  investigate-hero.tsx  The "Ask Mimir" bar on Overview + live trace
+  components/mimir-head.tsx  The mark; eyes light up only while an
+                             investigation is actually running
   investigations/       List, and the full reasoning trail for each
   insights/             What the agent currently believes
   experiments/          Proposed changes, metrics, guardrails
   data/                 The schema exactly as the agent sees it
+  settings/             Connections, model, storage, access key —
+                         everything backend-shaped lives only here
   api/investigate       Runs the agent loop
   api/cron/morning-brief  Scheduled daily run
 

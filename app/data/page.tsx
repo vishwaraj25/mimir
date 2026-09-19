@@ -35,9 +35,9 @@ export default async function DataPage() {
       </header>
 
       <div className="body">
-        <div className="panel">
-          <div className="panel-head"><h2>Connection</h2></div>
-          <div className="panel-body flush">
+        <div className="card">
+          <div className="card-head"><h2>Connection</h2></div>
+          <div className="card-body flush">
             <table>
               <thead>
                 <tr><th>Source</th><th>Id</th><th>Status</th><th>Window</th><th>Detail</th></tr>
@@ -61,12 +61,12 @@ export default async function DataPage() {
           </div>
         </div>
 
-        <div className="panel">
-          <div className="panel-head">
+        <div className="card">
+          <div className="card-head">
             <h2>Agent capability</h2>
             <span className={`tag ${provider.free ? "ok" : "warn"}`}>{provider.label}</span>
           </div>
-          <div className="panel-body flush">
+          <div className="card-body flush">
             <table>
               <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
               <tbody>
@@ -82,12 +82,12 @@ export default async function DataPage() {
         </div>
 
         {quality.length > 0 && (
-          <div className="panel">
-            <div className="panel-head">
+          <div className="card">
+            <div className="card-head">
               <h2>Data quality</h2>
               <span className="tag warn">{quality.length} checks</span>
             </div>
-            <div className="panel-body flush">
+            <div className="card-body flush">
               <table>
                 <tbody>
                   {quality.map((q, i) => (
@@ -100,14 +100,14 @@ export default async function DataPage() {
         )}
 
         {schema.events.map((ev) => (
-          <div className="panel" key={ev.name}>
-            <div className="panel-head">
+          <div className="card" key={ev.name}>
+            <div className="card-head">
               <h2 className="mono" style={{ textTransform: "none", letterSpacing: 0, color: "var(--data)" }}>
                 {ev.name}
               </h2>
               <span className="tag mono num">{ev.count.toLocaleString()}</span>
             </div>
-            <div className="panel-body flush">
+            <div className="card-body flush">
               {ev.properties.length === 0 ? (
                 <div className="empty">No properties.</div>
               ) : (

@@ -17,10 +17,10 @@ export default async function InsightsPage() {
 
       <div className="body">
         {rows.length === 0 ? (
-          <div className="panel"><div className="empty">No insights yet. They accumulate as investigations run.</div></div>
+          <div className="card"><div className="empty">No insights yet. They accumulate as investigations run.</div></div>
         ) : rows.map((r) => (
-          <div className="panel" key={r.id}>
-            <div className="panel-head">
+          <div className="card" key={r.id}>
+            <div className="card-head">
               <h2>{r.kind.replace("_", " ")}</h2>
               <div style={{ display: "flex", gap: 6 }}>
                 {r.sample_size != null && <span className="tag mono">n={r.sample_size}</span>}
@@ -29,7 +29,7 @@ export default async function InsightsPage() {
                 </span>
               </div>
             </div>
-            <div className="panel-body">
+            <div className="card-body">
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 5 }}>{r.headline}</div>
               <div className="prose">{r.detail}</div>
               <div style={{ display: "flex", gap: 14, marginTop: 12, alignItems: "center" }}>

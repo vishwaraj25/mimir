@@ -19,8 +19,8 @@ export default async function InvestigationsPage() {
       </header>
 
       <div className="body">
-        <div className="panel">
-          <div className="panel-body flush">
+        <div className="card">
+          <div className="card-body flush">
             {rows.length === 0 ? (
               <div className="empty">Nothing yet — ask a question on the Ask page.</div>
             ) : (

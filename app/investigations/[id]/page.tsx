@@ -52,9 +52,9 @@ export default async function InvestigationPage({
 
       <div className="body">
         {inv.headline && (
-          <div className="panel">
-            <div className="panel-head"><h2>Verdict</h2></div>
-            <div className="panel-body">
+          <div className="card">
+            <div className="card-head"><h2>Verdict</h2></div>
+            <div className="card-body">
               <div style={{ fontSize: 14.5, fontWeight: 600, marginBottom: 6 }}>{inv.headline}</div>
               <div className="prose">{inv.summary}</div>
               {inv.hypothesis && (
@@ -70,20 +70,20 @@ export default async function InvestigationPage({
         )}
 
         {inv.error && (
-          <div className="panel">
-            <div className="panel-head"><h2>Failed</h2></div>
-            <div className="panel-body">
+          <div className="card">
+            <div className="card-head"><h2>Failed</h2></div>
+            <div className="card-body">
               <span className="tag err">{inv.error}</span>
             </div>
           </div>
         )}
 
-        <div className="panel">
-          <div className="panel-head">
+        <div className="card">
+          <div className="card-head">
             <h2>Agent trace</h2>
             <span className="tag mono">{steps.length} steps · click any row</span>
           </div>
-          <div className="panel-body flush">
+          <div className="card-body flush">
             <Trace steps={steps} />
           </div>
         </div>

@@ -17,16 +17,16 @@ export default async function ExperimentsPage() {
 
       <div className="body">
         {rows.length === 0 ? (
-          <div className="panel"><div className="empty">Nothing proposed yet.</div></div>
+          <div className="card"><div className="empty">Nothing proposed yet.</div></div>
         ) : rows.map((r) => (
-          <div className="panel" key={r.id}>
-            <div className="panel-head">
+          <div className="card" key={r.id}>
+            <div className="card-head">
               <h2>{r.title}</h2>
               <span className={`tag ${r.status === "shipped" ? "ok" : r.status === "rejected" ? "err" : "agent"}`}>
                 {r.status}
               </span>
             </div>
-            <div className="panel-body flush">
+            <div className="card-body flush">
               <table>
                 <tbody>
                   <tr><td style={{ width: 150, color: "var(--text-3)" }}>Hypothesis</td><td>{r.hypothesis}</td></tr>
