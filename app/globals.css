@@ -285,12 +285,15 @@ pre.code {
 
 /* ---------- Mimir head glow ---------- */
 
-.mimir-eye { fill: var(--line-2); }
-.mimir-eye-active { fill: var(--agent); filter: drop-shadow(0 0 3px var(--agent)); }
-
-@keyframes mimir-pulse { 0%, 100% { opacity: 0.15; r: 6px; } 50% { opacity: 0.5; r: 9px; } }
-.mimir-glow { animation: mimir-pulse 1.6s ease-in-out infinite; transform-origin: center; }
-@media (prefers-reduced-motion: reduce) { .mimir-glow { animation: none; opacity: 0.3; } }
+/* Mimir head: the active artwork (public/mascot/mimir-active.png) breathes
+   gently while an investigation runs, on top of the crossfade the component
+   itself handles between the idle and active images. */
+@keyframes mimir-pulse {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(224, 138, 46, 0.55)); }
+  50% { filter: drop-shadow(0 0 11px rgba(224, 138, 46, 0.85)); }
+}
+.mimir-glow { animation: mimir-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .mimir-glow { animation: none; } }
 
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
 .live { animation: pulse 1.3s ease-in-out infinite; }
