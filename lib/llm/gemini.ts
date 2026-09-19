@@ -1,3 +1,4 @@
+import { RateLimitError } from "./types";
 import type {
   LLMMessage,
   LLMProvider,
@@ -8,10 +9,16 @@ import type {
 /**
  * Google Gemini, via the REST API.
  *
- * The default provider, because its free tier is real: Gemini 2.5 Flash
+ * The default provider, because its free tier is real: Gemini's Flash tier
  * allows enough requests per day that a daily brief plus a handful of
  * investigations costs nothing at all. Function calling is supported, which
  * is the only feature the agent actually needs.
+ *
+ * The current default model (gemini-3.6-flash) is a thinking model -- it
+ * returns a `thoughtSignature` on parts and requires it echoed back on any
+ * functionCall part sent as history, or it rejects the next turn outright.
+ * See the `raw` field on LLMToolCall for how that round-trips without
+ * leaking into the neutral interface.
  *
  * Called over fetch rather than through the SDK to keep the dependency
  * surface small -- the request shape here is stable and short.
@@ -24,7 +31,7 @@ export class GeminiProvider implements LLMProvider {
 
   constructor(
     private apiKey: string,
-    model = "gemini-2.5-flash",
+    model = "gemini-3.6-flash",
   ) {
     this.model = model;
     this.label = `Google ${model} (free tier)`;
@@ -44,8 +51,15 @@ export class GeminiProvider implements LLMProvider {
         const parts: Record<string, unknown>[] = [];
         if (m.text) parts.push({ text: m.text });
         for (const call of m.toolCalls) {
+          const thoughtSignature = (call.raw as { thoughtSignature?: string } | undefined)
+            ?.thoughtSignature;
           parts.push({
             functionCall: { name: call.name, args: call.input },
+            // Gemini's thinking models reject a later turn outright if a
+            // functionCall part from their OWN prior response comes back
+            // without the signature they attached to it -- so it has to
+            // survive the round trip through the neutral message history.
+            ...(thoughtSignature ? { thoughtSignature } : {}),
           });
         }
         return { role: "model", parts };
@@ -103,6 +117,27 @@ export class GeminiProvider implements LLMProvider {
 
     if (!res.ok) {
       const detail = await res.text();
+      if (res.status === 429) {
+        // Free-tier quota is exactly "N requests per minute per model", and
+        // Gemini's error body names the wait precisely (a RetryInfo detail
+        // with e.g. retryDelay: "40s") -- honor that instead of guessing.
+        let retryAfterMs: number | undefined;
+        try {
+          const parsed = JSON.parse(detail);
+          const retryInfo = parsed?.error?.details?.find(
+            (d: any) => d["@type"]?.includes("RetryInfo"),
+          );
+          const seconds = retryInfo?.retryDelay?.match(/^(\d+(?:\.\d+)?)s$/)?.[1];
+          if (seconds) retryAfterMs = Math.ceil(parseFloat(seconds) * 1000);
+        } catch {
+          // Body wasn't the JSON shape we expected -- fall through with no
+          // explicit delay, and let the caller's own backoff handle it.
+        }
+        throw new RateLimitError(
+          `Gemini 429: ${detail.slice(0, 400)}`,
+          retryAfterMs,
+        );
+      }
       throw new Error(`Gemini ${res.status}: ${detail.slice(0, 400)}`);
     }
 
@@ -119,6 +154,9 @@ export class GeminiProvider implements LLMProvider {
           id: `${part.functionCall.name}-${i++}`,
           name: part.functionCall.name,
           input: (part.functionCall.args ?? {}) as Record<string, unknown>,
+          raw: part.thoughtSignature
+            ? { thoughtSignature: part.thoughtSignature }
+            : undefined,
         });
       }
     }

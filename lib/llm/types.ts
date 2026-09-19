@@ -20,6 +20,15 @@ export interface LLMToolCall {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  /**
+   * Opaque per-provider state that has to round-trip through conversation
+   * history for that SAME provider to keep working, but that no other
+   * provider or the agent loop should ever need to read. Gemini's thinking
+   * models use this for `thoughtSignature`: they reject a later turn if a
+   * function-call part from their own prior response comes back without it.
+   * Providers that don't need this just never set or read it.
+   */
+  raw?: unknown;
 }
 
 export interface LLMToolResult {
@@ -40,6 +49,23 @@ export interface LLMResponse {
   text: string;
   toolCalls: LLMToolCall[];
   usage?: { inputTokens: number; outputTokens: number };
+}
+
+/**
+ * Thrown instead of a plain Error when a provider's response was
+ * identifiably a rate limit, so the retry logic doesn't have to guess from
+ * a status code buried in a message string. `retryAfterMs`, when the
+ * provider tells you exactly how long to wait (Gemini does, in its
+ * response body), is honored precisely instead of guessed at with backoff.
+ */
+export class RateLimitError extends Error {
+  constructor(
+    message: string,
+    public retryAfterMs?: number,
+  ) {
+    super(message);
+    this.name = "RateLimitError";
+  }
 }
 
 export interface LLMProvider {

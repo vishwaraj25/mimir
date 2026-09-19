@@ -1,5 +1,5 @@
 import { getSource } from "../connectors/registry";
-import { getProvider } from "../llm";
+import { completeWithRetry, getProvider } from "../llm";
 import type { LLMMessage, LLMToolResult } from "../llm";
 import { store } from "../store";
 import { INVESTIGATION_SYSTEM_PROMPT } from "./prompts";
@@ -100,7 +100,7 @@ export async function runInvestigation(opts: {
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       const started = Date.now();
-      const response = await provider.complete({
+      const response = await completeWithRetry(provider, {
         system: INVESTIGATION_SYSTEM_PROMPT,
         messages,
         tools: TOOL_DEFINITIONS,

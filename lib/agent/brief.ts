@@ -1,7 +1,7 @@
 import { detectAnomalies } from "../analysis/anomalies";
 import { computeOverview } from "../analysis/metrics";
 import { getSource } from "../connectors/registry";
-import { getProvider } from "../llm";
+import { completeWithRetry, getProvider } from "../llm";
 import { store } from "../store";
 import { BRIEF_SYSTEM_PROMPT } from "./prompts";
 import { runInvestigation } from "./runner";
@@ -46,7 +46,7 @@ export async function generateMorningBrief(sourceId: string) {
   };
 
   const provider = getProvider();
-  const response = await provider.complete({
+  const response = await completeWithRetry(provider, {
     system: BRIEF_SYSTEM_PROMPT,
     messages: [{ role: "user", text: JSON.stringify(facts, null, 2) }],
     maxTokens: 1024,

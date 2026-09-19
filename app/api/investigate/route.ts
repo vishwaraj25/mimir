@@ -1,5 +1,6 @@
 import { checkAccess, unauthorized } from "@/lib/auth";
 import { runInvestigation } from "@/lib/agent/runner";
+import { defaultSource } from "@/lib/connectors/registry";
 
 export const maxDuration = 300;
 
@@ -30,7 +31,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await runInvestigation({
-      sourceId: body.sourceId ?? "night-run",
+      // Fall back to whichever source is actually registered on this
+      // deployment -- "night-run" only exists once SOURCE_NIGHT_RUN_URL is
+      // set, so hardcoding it here broke the demo-only case entirely.
+      sourceId: body.sourceId ?? defaultSource().id,
       question,
     });
     return Response.json(result);

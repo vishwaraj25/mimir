@@ -1,3 +1,4 @@
+import { RateLimitError } from "./types";
 import type {
   LLMMessage,
   LLMProvider,
@@ -113,6 +114,17 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     if (!res.ok) {
       const detail = await res.text();
+      if (res.status === 429) {
+        // The OpenAI-compatible convention is a Retry-After header (seconds
+        // or an HTTP date); honor it when present instead of guessing.
+        const header = res.headers.get("retry-after");
+        const seconds = header ? Number(header) : NaN;
+        const retryAfterMs = Number.isFinite(seconds) ? seconds * 1000 : undefined;
+        throw new RateLimitError(
+          `${this.id} 429: ${detail.slice(0, 400)}`,
+          retryAfterMs,
+        );
+      }
       throw new Error(`${this.id} ${res.status}: ${detail.slice(0, 400)}`);
     }
 

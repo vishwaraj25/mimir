@@ -165,7 +165,16 @@ the work is structured to stay inside it:
   floor, so a quiet day costs one request
 
 An investigation you start by hand is roughly 8–15 calls. On a free tier that
-is still nothing; on a paid provider it would be cents.
+is still nothing in dollars -- but confirmed by actually running it against
+Gemini's free tier: it caps `gemini-3.6-flash` at 5 requests/minute AND a low
+daily ceiling (a fresh key's free allowance measured around 20/day). A single
+investigation can burn through most of a day's quota by itself. The retry
+logic (`lib/llm/index.ts`) honors the exact wait Gemini's response specifies
+rather than guessing, so a per-minute limit resolves itself automatically;
+the daily one doesn't, it just fails with a clear error until the quota
+resets. If you plan to run several investigations a day, either budget for
+that ceiling or set `LLM_PROVIDER=groq` -- Groq's free tier has a materially
+higher daily allowance and no cost either way.
 
 ## Status
 
