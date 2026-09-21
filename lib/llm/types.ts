@@ -49,6 +49,8 @@ export interface LLMResponse {
   text: string;
   toolCalls: LLMToolCall[];
   usage?: { inputTokens: number; outputTokens: number };
+  /** Why the model stopped ("stop", "length", ...), when the provider says. */
+  finishReason?: string;
 }
 
 /**

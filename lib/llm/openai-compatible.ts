@@ -86,6 +86,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
       messages,
       max_tokens: opts.maxTokens ?? 4096,
       temperature: 0.2,
+      // gpt-oss models spend output tokens on hidden reasoning before the
+      // visible answer; "low" keeps that from eating the reply budget on a
+      // free tier that counts every token against a per-minute ceiling.
+      ...(this.opts.model.includes("gpt-oss") ? { reasoning_effort: "low" } : {}),
     };
 
     if (opts.tools?.length) {
@@ -145,6 +149,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     return {
       text: choice.content ?? "",
+      finishReason: data.choices?.[0]?.finish_reason,
       toolCalls,
       usage: data.usage
         ? {

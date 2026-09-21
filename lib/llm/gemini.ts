@@ -164,6 +164,7 @@ export class GeminiProvider implements LLMProvider {
     return {
       text,
       toolCalls,
+      finishReason: data.candidates?.[0]?.finishReason,
       usage: data.usageMetadata
         ? {
             inputTokens: data.usageMetadata.promptTokenCount ?? 0,

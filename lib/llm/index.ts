@@ -36,8 +36,8 @@ export function getProvider(): LLMProvider {
               id: "groq",
               baseUrl: "https://api.groq.com/openai/v1",
               apiKey: process.env.GROQ_API_KEY,
-              model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-              label: `Groq ${process.env.GROQ_MODEL || "llama-3.3-70b-versatile"} (free tier)`,
+              model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
+              label: `Groq ${process.env.GROQ_MODEL || "openai/gpt-oss-120b"} (free tier)`,
               free: true,
             })
           : null,
@@ -126,7 +126,11 @@ const MAX_RATE_LIMIT_RETRIES = 6;
 // per model". A structured 429 (RateLimitError) gets the wait it actually
 // asked for; this is only the fallback for a 429 that didn't say.
 const FALLBACK_RETRY_MS = 15_000;
-const MAX_WAIT_MS = 60_000;
+// Long enough to actually honor what a provider asks for. Capping this at
+// 60s was worse than useless: Groq asked for longer, the retry fired early,
+// got refused again, and burned an attempt each time -- the cap turned a
+// single wait into six failed ones.
+const MAX_WAIT_MS = 180_000;
 
 /**
  * A free-tier quota is not a rare edge case for the agent loop -- it fires

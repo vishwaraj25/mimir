@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MimirHead } from "./components/mimir-head";
 import { Trace, type TraceStep } from "./investigations/trace";
@@ -28,7 +28,7 @@ export function InvestigateHero() {
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [steps, setSteps] = useState<TraceStep[]>([]);
-  const liveIdRef = useRef<number | null>(null);
+  const [liveId, setLiveId] = useState<number | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -37,18 +37,64 @@ export function InvestigateHero() {
     } catch {}
   }, []);
 
+  /**
+   * Poll the trail while the agent works.
+   *
+   * `liveId` is state rather than a ref precisely so this effect re-runs the
+   * moment the id arrives -- a ref would update silently and the polling
+   * would never start, which is exactly the bug this replaced.
+   */
   useEffect(() => {
-    if (!busy || liveIdRef.current == null) return;
-    const t = setInterval(async () => {
+    if (liveId == null) return;
+    let stop = false;
+
+    const tick = async () => {
       try {
-        const r = await fetch(`/api/investigations/${liveIdRef.current}`, {
+        const r = await fetch(`/api/investigations/${liveId}`, {
           headers: { "x-mimir-key": accessKey },
         });
-        if (r.ok) setSteps((await r.json()).steps ?? []);
-      } catch {}
-    }, 1100);
-    return () => clearInterval(t);
-  }, [busy, accessKey]);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (stop) return;
+        setSteps(data.steps ?? []);
+
+        const inv = data.investigation;
+        if (inv?.status === "complete" || inv?.status === "failed") {
+          stop = true;
+          setBusy(false);
+          if (inv.status === "failed") {
+            setError(inv.error ?? "The investigation failed.");
+          } else {
+            // The conclusion step carries the full structured verdict,
+            // including any proposed experiment; the row carries the prose.
+            const conclusion = (data.steps ?? []).find(
+              (s: TraceStep) => s.kind === "conclusion",
+            );
+            const verdict = (conclusion?.result ?? {}) as any;
+            setResult({
+              investigationId: liveId,
+              headline: inv.headline,
+              summary: inv.summary,
+              hypothesis: inv.hypothesis,
+              confidence: inv.confidence,
+              modelLabel: inv.model_label,
+              experiment: verdict.experiment ?? null,
+            });
+          }
+          router.refresh();
+        }
+      } catch {
+        // A single failed poll is not worth surfacing; the next one retries.
+      }
+    };
+
+    void tick();
+    const t = setInterval(tick, 1200);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  }, [liveId, accessKey, router]);
 
   async function run(q?: string) {
     const text = (q ?? question).trim();
@@ -58,7 +104,7 @@ export function InvestigateHero() {
     setError(null);
     setResult(null);
     setSteps([]);
-    liveIdRef.current = null;
+    setLiveId(null);
 
     try {
       const started = await fetch("/api/investigate", {
@@ -68,17 +114,10 @@ export function InvestigateHero() {
       });
       const data = await started.json();
       if (!started.ok) throw new Error(readableError(data.error));
-      setResult(data);
-      liveIdRef.current = data.investigationId;
-
-      const trail = await fetch(`/api/investigations/${data.investigationId}`, {
-        headers: { "x-mimir-key": accessKey },
-      });
-      if (trail.ok) setSteps((await trail.json()).steps ?? []);
-      router.refresh();
+      // Returns immediately with just the id; the effect above takes over.
+      setLiveId(data.investigationId);
     } catch (e) {
       setError((e as Error).message);
-    } finally {
       setBusy(false);
     }
   }
