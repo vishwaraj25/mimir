@@ -51,7 +51,11 @@ function generate(): DemoEvent[] {
 
   // 28 days of history, ~9 players a day.
   for (let dayOffset = 27; dayOffset >= 0; dayOffset--) {
-    const isRecentWeek = dayOffset < 7;
+    // MIMIR_DEMO_SCENARIO=flat removes the regression entirely, which is what
+    // a false-premise question ("why did completion drop?") needs to be tested
+    // against: an analyst that finds a cause for a drop that never happened is
+    // worse than one that finds nothing.
+    const isRecentWeek = dayOffset < 7 && process.env.MIMIR_DEMO_SCENARIO !== "flat";
     const playersToday = 16 + Math.floor(rand() * 9);
 
     for (let p = 0; p < playersToday; p++) {

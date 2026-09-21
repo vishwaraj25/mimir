@@ -1,6 +1,6 @@
 import { getSource } from "../connectors/registry";
 import { completeWithRetry, getProvider } from "../llm";
-import type { LLMMessage, LLMToolResult } from "../llm";
+import type { LLMMessage, LLMProvider, LLMToolResult } from "../llm";
 import { store } from "../store";
 import { INVESTIGATION_SYSTEM_PROMPT } from "./prompts";
 import { executeTool, TOOL_DEFINITIONS } from "./tools";
@@ -190,13 +190,15 @@ export async function startInvestigation(opts: {
   sourceId: string;
   question: string;
   trigger?: "ask" | "monitor";
+  /** Defaults to the configured provider's label. */
+  modelLabel?: string;
 }): Promise<number> {
   getSource(opts.sourceId); // fail fast on an unknown source
   return store().createInvestigation({
     sourceId: opts.sourceId,
     question: opts.question,
     trigger: opts.trigger ?? "ask",
-    modelLabel: getProvider().label,
+    modelLabel: opts.modelLabel ?? getProvider().label,
   });
 }
 
@@ -212,10 +214,15 @@ export async function runInvestigation(opts: {
 
 export async function runInvestigationLoop(
   investigationId: number,
-  opts: { sourceId: string; question: string },
+  opts: {
+    sourceId: string;
+    question: string;
+    /** Injected by tests, so the loop's rules can be checked with no model. */
+    provider?: LLMProvider;
+  },
 ): Promise<InvestigationResult> {
   const source = getSource(opts.sourceId);
-  const provider = getProvider();
+  const provider = opts.provider ?? getProvider();
   const db = store();
 
   const messages: LLMMessage[] = [
@@ -227,8 +234,10 @@ export async function runInvestigationLoop(
 
   /** Set when a reply came back without a usable verdict and was re-asked. */
   let verdictRequested = false;
-  /** Whether the investigation ever established WHERE the change came from. */
-  let localised = false;
+  /** Whether the agent ever TRIED to establish where the change came from. */
+  let localiseAttempted = false;
+  /** Whether a tool result actually pointed at a place. */
+  let causeFound = false;
   let localiseNudged = false;
 
   /** Signature -> abbreviated result, so an identical re-ask can be refused. */
@@ -320,8 +329,8 @@ export async function runInvestigationLoop(
       // structural: send the verdict back once, with tools restored.
       if (
         response.toolCalls.length === 0 &&
-        parseVerdict(response.text) &&
-        !localised &&
+        parseVerdict(response.text)?.question_type === "change" &&
+        !localiseAttempted &&
         !localiseNudged &&
         turnsLeft > 2
       ) {
@@ -380,14 +389,18 @@ export async function runInvestigationLoop(
           experiment: null,
         };
 
-        // Confidence describes the CAUSE. If nothing ever established where
-        // the change came from, "high" is not earned however clean the
-        // measurement of the drop was.
-        if (!localised && verdict.confidence === "high") {
-          verdict.confidence = "medium";
-          verdict.summary =
-            `${verdict.summary ?? ""} (Confidence capped at medium: the ` +
-            `investigation never established where the change came from.)`.trim();
+        // What a verdict is allowed to claim is decided here, not left to the
+        // model. Observed: with nothing located, it still offered invented
+        // causes ("enemy attacks softened or shield cooldown increased") and
+        // an experiment built on them, at high confidence.
+        if (verdict.question_type === "change" && !causeFound) {
+          if (verdict.hypothesis) {
+            verdict.summary =
+              `${verdict.summary ?? ""} Untested idea (nothing in the data located a cause): ${verdict.hypothesis}`.trim();
+            verdict.hypothesis = "";
+          }
+          verdict.experiment = null;
+          if (verdict.confidence === "high") verdict.confidence = "medium";
         }
 
         await step("conclusion", {
@@ -490,7 +503,10 @@ export async function runInvestigationLoop(
               call.name === "locate_change" ||
               (call.name === "aggregate" && (call.input as any)?.compare_to_prior)
             ) {
-              localised = true;
+              localiseAttempted = true;
+              const found = (payload as any)?.strongest_first?.length > 0 ||
+                (payload as any)?.biggest_changes?.length > 0;
+              if (found) causeFound = true;
             }
             seenCalls.set(signature, truncateResult(JSON.stringify(payload)).slice(0, 1_200));
           }

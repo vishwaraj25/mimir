@@ -161,6 +161,17 @@ export async function completeWithRetry(
       if (!(err instanceof RateLimitError) || attempt >= MAX_RATE_LIMIT_RETRIES) {
         throw err;
       }
+      // A wait longer than any per-minute window is a DAILY quota, not a
+      // burst. Sleeping through it just hangs the caller for minutes and then
+      // fails anyway (measured: six 180s waits, ~18 minutes, then an error),
+      // so say so at once and let the caller show something useful.
+      if ((err.retryAfterMs ?? 0) > MAX_WAIT_MS) {
+        const mins = Math.ceil((err.retryAfterMs as number) / 60_000);
+        throw new Error(
+          `${provider.label} daily quota is used up; it asks for ~${mins} min before more requests. ` +
+            `Try again then, or switch model on Settings.`,
+        );
+      }
       attempt++;
       const waitMs = Math.min(err.retryAfterMs ?? FALLBACK_RETRY_MS, MAX_WAIT_MS);
       console.warn(
