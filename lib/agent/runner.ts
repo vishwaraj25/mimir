@@ -96,7 +96,7 @@ function truncateResult(serialised: string): string {
   );
 }
 
-function compressHistory(
+export function compressHistory(
   messages: LLMMessage[],
   budgetChars = HISTORY_BUDGET_CHARS,
 ): LLMMessage[] {

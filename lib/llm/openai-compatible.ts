@@ -10,7 +10,7 @@ import type {
  * Anything that speaks the OpenAI chat-completions API.
  *
  * One implementation covers a lot of free ground:
- *   Groq       free tier, very fast, llama-3.3-70b-versatile
+ *   Groq       free tier, very fast (default: openai/gpt-oss-120b)
  *   OpenRouter has genuinely free model variants
  *   Ollama     local, free forever, no API key, no network
  *   LM Studio  same

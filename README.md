@@ -14,13 +14,14 @@ runs a real investigation:
 
 1. Reads the event schema, so it works with the events that exist rather than
    guessing names
-2. Confirms the change is real before explaining it
-3. Locates which funnel stage or segment actually moved
-4. Segments that metric by every property the data carries
-5. Compares users who succeeded against users who did not
-6. Checks whether the sample is large enough to conclude anything
-7. Forms a hypothesis, and says what would falsify it
-8. Proposes an experiment with a primary metric and guardrails
+2. Decides whether it was asked about a *change* or the current *state*
+3. For a change: confirms it is real, and says so plainly if it is not
+4. Finds *where* it came from -- which position, stage or segment moved beyond
+   what overall growth explains
+5. Checks whether the sample is large enough to conclude anything
+6. Forms a hypothesis only if something located a cause, and says what would
+   falsify it
+7. Proposes an experiment with a primary metric and guardrails
 
 Every step is stored. The Investigations page shows the full trail — each tool
 call, its arguments, and the raw result — so a finding can be audited rather
@@ -81,7 +82,7 @@ app/                    Next.js App Router
 lib/
   llm/                  Provider-neutral tool calling (Gemini, Groq, Ollama, ...)
   agent/runner.ts       The agentic loop (tool call -> execute -> feed back)
-  agent/tools.ts        What the agent can do, defined over EventSource
+  agent/tools.ts        What the agent can do (ten tools), defined over EventSource
   agent/prompts.ts      Operating instructions, including the honesty rules
   agent/brief.ts        Morning brief + auto-triggered investigation
   analysis/metrics.ts   Deterministic metrics (computed in code, not by the model)
@@ -149,39 +150,88 @@ Then optionally, to persist findings and connect real data:
 |---|---|
 | `MIMIR_DATABASE_URL` | Mimir's own Postgres. Run `db/schema.sql` once. Without it, storage is in-memory and resets on restart. |
 | `SOURCE_NIGHT_RUN_URL` | Read-only role on a real telemetry source. Without it, the synthetic source is used. |
-| `MIMIR_ACCESS_KEY` | Password for the API. Optional locally, **required in production**. |
+| `MIMIR_ACCESS_KEY` | Password for the API, sent as an `x-mimir-key` header (never in the URL). Optional locally, **required in production**. |
 
 Deploy on Vercel. `vercel.json` registers the 06:00 daily cron for the brief.
 
-## Cost
+## Cost, and the limits that actually bind
 
-Designed to run for nothing. The default provider is Gemini's free tier, and
-the work is structured to stay inside it:
+Designed to run for nothing, but "free" has real ceilings. Measured by running
+it, not read from a pricing page:
 
-- Metrics, funnels, anomaly detection and the significance test are computed
-  in code, never by the model
-- The morning brief is a single call over numbers already computed
-- An investigation runs automatically only when a change clears a volume
-  floor, so a quiet day costs one request
+| Provider (free tier) | Binding limit | What that means |
+|---|---|---|
+| **Groq**, `gpt-oss-120b` | 8,000 tokens/min and **200,000 tokens/day** | About 5-6 full investigations a day. The per-minute limit shaped the loop's design (below) |
+| **Gemini**, `gemini-3.6-flash` | 5 requests/min and roughly 20/day | About one investigation a day |
+| **Ollama** (local) | None | Unlimited, at the speed of your own machine |
 
-An investigation you start by hand is roughly 8–15 calls. On a free tier that
-is still nothing in dollars -- but confirmed by actually running it against
-Gemini's free tier: it caps `gemini-3.6-flash` at 5 requests/minute AND a low
-daily ceiling (a fresh key's free allowance measured around 20/day). A single
-investigation can burn through most of a day's quota by itself. The retry
-logic (`lib/llm/index.ts`) honors the exact wait Gemini's response specifies
-rather than guessing, so a per-minute limit resolves itself automatically;
-the daily one doesn't, it just fails with a clear error until the quota
-resets. If you plan to run several investigations a day, either budget for
-that ceiling or set `LLM_PROVIDER=groq` -- Groq's free tier has a materially
-higher daily allowance and no cost either way.
+What keeps an investigation inside those numbers:
+
+- Metrics, funnels, anomaly detection and the significance test run in code,
+  never in the model, so no tokens are spent on arithmetic
+- The morning brief is one call over numbers already computed, and an
+  investigation starts by itself only when a change clears a volume floor
+- Every request re-sends the system prompt, the tool definitions and the
+  history, so the history is trimmed and hard-budgeted (`compressHistory`)
+  rather than growing every turn. Before that, waits rose steadily and a run
+  died at 8,163 tokens against the 8,000 ceiling
+- A per-minute 429 is waited out for exactly as long as the provider says; a
+  daily-quota 429 fails immediately with a clear message instead of hanging
+
+## How the agent is kept honest
+
+A free model will happily give a confident answer to anything, so the rules
+that matter are enforced by the loop (`lib/agent/runner.ts`), not just asked
+for in the prompt. Each of these exists because a real run broke it:
+
+- **Question type.** The agent says whether a question is about a *change* or
+  the current *state*. State questions ("is the shield used?") get direct
+  measurements and are never sent hunting for a week-over-week change
+- **A false premise is an answer.** If completion did not drop, the finding is
+  that it did not, with both rates
+- **A cause has to be located.** `locate_change` compares two equal windows and
+  scores each value against what plain growth would predict, so a property that
+  merely scaled with total volume is not blamed. If a change verdict never tried
+  to locate anything it is sent back once
+- **Nothing is claimed that no tool showed.** With no located cause, the
+  hypothesis is demoted to an "untested idea" in the summary, the proposed
+  experiment is dropped, and confidence is capped
+- **No repeats, and a forced ending.** An identical tool call is refused with
+  the earlier result, the agent is warned before running out of turns, and the
+  last turn withholds tools so the only thing left to do is answer
+
+## Tests
+
+```bash
+npm test
+```
+
+48 tests, no network and no model key needed. The loop's rules run against a
+scripted fake model, so they are checked in milliseconds and repeatably.
+Covered: the significance test and its small-sample guard, anomaly detection,
+`locate_change`, history trimming, retry and quota handling, the Gemini
+`thoughtSignature` round trip, rate-limit parsing for both provider styles,
+auth, the store, and the demo scenarios (including one with no regression, so
+a false-premise question can be tested).
+
+The tests were themselves checked: six behaviours were broken on purpose, and
+each was caught. That exercise found one test that could not fail (its example
+was already non-significant, so it never reached the guard), which is now
+fixed. What tests cannot cover is whether a real model *chooses* well; that
+needs live runs, and those are limited by the quotas above.
 
 ## Status
 
 Working: the connector abstraction, the agent loop, investigations with full
-trails, insights, proposed experiments, the schema explorer, the morning brief.
+trails, insights, proposed experiments, the schema explorer, the morning brief,
+and the tests above.
 
-Not built yet: user-defined funnels and cohorts as first-class saved objects,
-and experiment result tracking (the schema is there, the measurement loop is
-not). Both were deliberately deferred — at the current data volume they would
-be empty shells.
+Verified live, against the demo data: on "why did completion drop?" the agent
+finds the planted cause (a death spike at x=22,000, 4 to 49) in 7 tool calls,
+twice. Five varied questions were also run; three failed and were fixed as
+described above. Those three fixes have been tested offline but **not yet
+re-run against a real model**.
+
+Not built: saved funnels and cohorts as stored objects, and experiment result
+tracking (the schema is there, the measurement loop is not). Not yet done:
+connecting a real source, persistent storage in production, and deployment.

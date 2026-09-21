@@ -402,7 +402,7 @@ export async function executeTool(
 
 
 /** A round bucket width giving roughly `target` buckets across a range. */
-function niceStep(min: number, max: number, target = 14): number {
+export function niceStep(min: number, max: number, target = 14): number {
   const raw = Math.max((max - min) / target, 1e-9);
   const pow = 10 ** Math.floor(Math.log10(raw));
   const frac = raw / pow;
