@@ -145,8 +145,32 @@ export const TOOL_DEFINITIONS: LLMTool[] = [
           description: "Required when metric is avg or sum.",
         },
         days_back: { type: "number", description: "Default 28." },
+        compare_to_prior: {
+          type: "boolean",
+          description:
+            "Also run the identical query over the equally long window before this one and return both side by side, sorted by biggest change. Use this to find WHERE a change came from (e.g. group_by a position, bucket_size it).",
+        },
       },
       required: ["metric"],
+    },
+  },
+  {
+    name: "locate_change",
+    description:
+      "THE tool for 'where did people get lost / where did it change'. Give it the event that marks a loss or a change (a death, an exit, an error). It finds every property of that event that says where or how it happened, compares the last window to the one before it, and reports which value of which property changed most, and how concentrated the change is. Call this as soon as a metric has moved.",
+    parameters: {
+      type: "object",
+      properties: {
+        event_name: {
+          type: "string",
+          description: "The event that marks the loss, e.g. player_died.",
+        },
+        days_back: {
+          type: "number",
+          description: "Length of each window. Default 7.",
+        },
+      },
+      required: ["event_name"],
     },
   },
   {
@@ -285,16 +309,57 @@ export async function executeTool(
       };
     }
 
-    case "aggregate":
-      return await source.runAggregate({
+    case "aggregate": {
+      const spec = {
         eventName: input.event_name,
         groupBy: input.group_by,
         bucketSize: input.bucket_size,
         metric: input.metric,
         metricProperty: input.metric_property,
-        range,
-        limit: 60,
-      });
+        limit: 200,
+      };
+      if (!input.compare_to_prior) {
+        return await source.runAggregate({ ...spec, range });
+      }
+
+      // Same query over two adjacent equal windows, merged per group. A
+      // shift that lives in one place -- say a burst of deaths at a single
+      // position -- is invisible in either window's own histogram but
+      // obvious as a per-group change, so that is what gets sorted on.
+      const prior: TimeRange = { from: daysAgo(days * 2), to: daysAgo(days) };
+      const recent: TimeRange = { from: daysAgo(days), to: daysAgo(0) };
+      const [before, after] = await Promise.all([
+        source.runAggregate({ ...spec, range: prior }),
+        source.runAggregate({ ...spec, range: recent }),
+      ]);
+      const key = (r: any) => String(r.group_value);
+      const byGroup = new Map<string, { before: number; after: number }>();
+      for (const r of before) byGroup.set(key(r), { before: Number(r.value), after: 0 });
+      for (const r of after) {
+        const g = byGroup.get(key(r)) ?? { before: 0, after: 0 };
+        g.after = Number(r.value);
+        byGroup.set(key(r), g);
+      }
+      const rows = [...byGroup.entries()]
+        .map(([group_value, v]) => ({
+          group_value,
+          prior_window: v.before,
+          recent_window: v.after,
+          change: Number((v.after - v.before).toFixed(2)),
+        }))
+        .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+        .slice(0, 12);
+      return {
+        window_days: days,
+        note: "Largest per-group changes first. Groups not listed changed less.",
+        biggest_changes: rows,
+        total_prior: before.reduce((n, r: any) => n + Number(r.value), 0),
+        total_recent: after.reduce((n, r: any) => n + Number(r.value), 0),
+      };
+    }
+
+    case "locate_change":
+      return await locateChange(source, input.event_name, (input.days_back as number) ?? 7);
 
     case "user_timeline":
       return await source.userTimeline(input.user_id, 300);
@@ -333,4 +398,114 @@ export async function executeTool(
     default:
       throw new Error(`unknown tool: ${name}`);
   }
+}
+
+
+/** A round bucket width giving roughly `target` buckets across a range. */
+function niceStep(min: number, max: number, target = 14): number {
+  const raw = Math.max((max - min) / target, 1e-9);
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const frac = raw / pow;
+  const nice = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+/**
+ * Finds where a change came from.
+ *
+ * Deliberately a tool rather than advice in the prompt: the useful move
+ * (take the loss event, group it by each property that says where it
+ * happened, compare two windows, look for one place that changed) takes
+ * four separate decisions to assemble from the primitives, and a free
+ * model reliably skipped it -- twice, ending on a confident and wrong
+ * cause. Packaging it as one call named for the question makes the right
+ * investigation the easy one. It is source-agnostic: it reads the schema
+ * and works on whatever properties the event actually carries.
+ */
+async function locateChange(source: EventSource, eventName: string, days: number) {
+  const schema = await source.describeSchema();
+  const event = schema.events.find((e) => e.name === eventName);
+  if (!event) {
+    return { error: `no event named "${eventName}"`, known_events: schema.events.map((e) => e.name) };
+  }
+
+  const prior: TimeRange = { from: daysAgo(days * 2), to: daysAgo(days) };
+  const recent: TimeRange = { from: daysAgo(days), to: daysAgo(0) };
+  const findings: any[] = [];
+
+  for (const prop of event.properties) {
+    if (prop.distinctCount < 2) continue; // one value cannot say where
+
+    let bucketSize: number | undefined;
+    if (prop.type === "number") {
+      const raw = await source.runAggregate({
+        eventName, groupBy: prop.key, metric: "event_count",
+        range: { from: prior.from, to: recent.to }, limit: 2000,
+      });
+      const values = raw.map((r: any) => Number(r.group_value)).filter(Number.isFinite);
+      if (values.length < 2) continue;
+      bucketSize = niceStep(Math.min(...values), Math.max(...values));
+    } else if (prop.distinctCount > 30) {
+      continue; // too many categories to compare meaningfully
+    }
+
+    const spec = { eventName, groupBy: prop.key, bucketSize, metric: "event_count" as const, limit: 200 };
+    const [before, after] = await Promise.all([
+      source.runAggregate({ ...spec, range: prior }),
+      source.runAggregate({ ...spec, range: recent }),
+    ]);
+
+    const groups = new Map<string, { before: number; after: number }>();
+    for (const r of before) groups.set(String(r.group_value), { before: Number(r.value), after: 0 });
+    for (const r of after) {
+      const g = groups.get(String(r.group_value)) ?? { before: 0, after: 0 };
+      g.after = Number(r.value);
+      groups.set(String(r.group_value), g);
+    }
+
+    // Judge each value against what plain growth would predict, not against
+    // zero. When total volume rises 76%, every value rising ~76% has not
+    // "changed" -- the mix is the same. Only the excess over that is a
+    // shift. Without this a two-valued property (defeated/fell) looked like
+    // the source of the change purely because one of two values is always
+    // the bigger mover.
+    const totalBefore = [...groups.values()].reduce((n, g) => n + g.before, 0);
+    const totalAfter = [...groups.values()].reduce((n, g) => n + g.after, 0);
+    if (totalAfter === 0 && totalBefore === 0) continue;
+    const scale = totalBefore > 0 ? totalAfter / totalBefore : 1;
+
+    const rows = [...groups.entries()]
+      .map(([value, v]) => {
+        const expected = v.before * scale;
+        return {
+          value,
+          prior: v.before,
+          recent: v.after,
+          expected_recent: Number(expected.toFixed(1)),
+          excess: Number((v.after - expected).toFixed(1)),
+        };
+      })
+      .sort((a, b) => Math.abs(b.excess) - Math.abs(a.excess));
+
+    // How big the biggest surprise is relative to all recent activity.
+    const strength = Math.abs(rows[0].excess) / Math.max(totalAfter, 1);
+    if (strength < 0.03) continue; // within noise of proportional growth
+
+    findings.push({
+      property: prop.key,
+      bucket_size: bucketSize ?? null,
+      strength: Number(strength.toFixed(2)),
+      top_changes: rows.slice(0, 3),
+    });
+  }
+
+  findings.sort((a, b) => b.strength - a.strength);
+  return {
+    event: eventName,
+    window_days: days,
+    strongest_first: findings.slice(0, 4),
+    note: findings.length === 0
+      ? "No value of any property moved beyond what overall growth predicts: the change, if any, is spread evenly and this event does not localise it."
+      : "excess = recent minus what proportional growth would predict. A large excess in one value is where the change came from; strength is that excess as a share of all recent activity.",
+  };
 }

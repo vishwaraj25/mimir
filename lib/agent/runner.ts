@@ -227,6 +227,9 @@ export async function runInvestigationLoop(
 
   /** Set when a reply came back without a usable verdict and was re-asked. */
   let verdictRequested = false;
+  /** Whether the investigation ever established WHERE the change came from. */
+  let localised = false;
+  let localiseNudged = false;
 
   /** Signature -> abbreviated result, so an identical re-ask can be refused. */
   const seenCalls = new Map<string, string>();
@@ -310,6 +313,33 @@ export async function runInvestigationLoop(
         });
       }
 
+      // A verdict on a change nobody located is a guess with a number in it.
+      // Observed twice: it measured the drop correctly, never asked where
+      // the loss happened, and concluded "the boss" with high confidence.
+      // The prompt says to localise; the model skipped it, so this makes it
+      // structural: send the verdict back once, with tools restored.
+      if (
+        response.toolCalls.length === 0 &&
+        parseVerdict(response.text) &&
+        !localised &&
+        !localiseNudged &&
+        turnsLeft > 2
+      ) {
+        localiseNudged = true;
+        verdictRequested = false; // tools must be available again
+        console.warn("verdict offered without locating the change; sending it back once");
+        messages.push({ role: "assistant", text: response.text, toolCalls: [] });
+        messages.push({
+          role: "user",
+          text:
+            "Before concluding: you have not established WHERE the change came from. " +
+            "Call locate_change on the event that marks the loss (for example the " +
+            "event recorded when a user fails, exits or errors) and let its result " +
+            "shape your verdict. If it shows nothing localised, say that instead.",
+        });
+        continue;
+      }
+
       // No tools requested means the model thinks it is done. But a reply
       // with no tool calls is not automatically a verdict: observed, a run
       // that had gathered the right evidence in 4 calls came back with an
@@ -349,6 +379,16 @@ export async function runInvestigationLoop(
           insights: [],
           experiment: null,
         };
+
+        // Confidence describes the CAUSE. If nothing ever established where
+        // the change came from, "high" is not earned however clean the
+        // measurement of the drop was.
+        if (!localised && verdict.confidence === "high") {
+          verdict.confidence = "medium";
+          verdict.summary =
+            `${verdict.summary ?? ""} (Confidence capped at medium: the ` +
+            `investigation never established where the change came from.)`.trim();
+        }
 
         await step("conclusion", {
           content: verdict.summary ?? response.text,
@@ -446,6 +486,12 @@ export async function runInvestigationLoop(
             isError = true;
           }
           if (!isError) {
+            if (
+              call.name === "locate_change" ||
+              (call.name === "aggregate" && (call.input as any)?.compare_to_prior)
+            ) {
+              localised = true;
+            }
             seenCalls.set(signature, truncateResult(JSON.stringify(payload)).slice(0, 1_200));
           }
         }
