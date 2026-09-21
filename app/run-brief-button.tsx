@@ -12,9 +12,7 @@ export function RunBriefButton() {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch("/api/cron/morning-brief", {
-        headers: { "x-mimir-key": localStorage.getItem("mimir_key") ?? "" },
-      });
+      const res = await fetch("/api/cron/morning-brief");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "failed");
       router.refresh();

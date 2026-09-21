@@ -1,5 +1,6 @@
 import { store } from "@/lib/store";
 import { Trace } from "../trace";
+import { requirePageAccess } from "@/lib/page-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,7 @@ export default async function InvestigationPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requirePageAccess();
   const { id } = await params;
   const { investigation: inv, steps } = await store().getInvestigation(Number(id));
 

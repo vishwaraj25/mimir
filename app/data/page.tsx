@@ -1,6 +1,7 @@
 import { defaultSource, listSources } from "@/lib/connectors/registry";
 import { TOOL_DEFINITIONS } from "@/lib/agent/tools";
 import { describeProvider } from "@/lib/llm";
+import { requirePageAccess } from "@/lib/page-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
  * question that depends on it is "that is not tracked".
  */
 export default async function DataPage() {
+  await requirePageAccess();
   const source = defaultSource();
   const [schema, health] = await Promise.all([
     source.describeSchema(),

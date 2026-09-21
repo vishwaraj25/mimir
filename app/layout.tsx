@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { isDemoOnly } from "@/lib/connectors/registry";
+import { hasPageAccess } from "@/lib/page-auth";
 import { MimirHead } from "./components/mimir-head";
 import { NavLink } from "./nav-link";
 
@@ -27,7 +28,18 @@ const NAV = [
   ["Data", [["/data", "Schema", "▦"]]],
 ] as const;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Signed out means the only reachable page is /login: render it bare, so
+  // the navigation (and whether a real source is connected) isn't shown to
+  // someone who hasn't signed in.
+  if (!(await hasPageAccess())) {
+    return (
+      <html lang="en" className={`${inter.variable} ${mono.variable}`}>
+        <body style={{ fontFamily: "var(--font-sans), system-ui, sans-serif" }}>{children}</body>
+      </html>
+    );
+  }
+
   const demo = isDemoOnly();
 
   return (

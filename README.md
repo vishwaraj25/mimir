@@ -150,7 +150,7 @@ Then optionally, to persist findings and connect real data:
 |---|---|
 | `MIMIR_DATABASE_URL` | Mimir's own Postgres. Run `db/schema.sql` once. Without it, storage is in-memory and resets on restart. |
 | `SOURCE_NIGHT_RUN_URL` | Read-only role on a real telemetry source. Without it, the synthetic source is used. |
-| `MIMIR_ACCESS_KEY` | Password for the API, sent as an `x-mimir-key` header (never in the URL). Optional locally, **required in production**. |
+| `MIMIR_ACCESS_KEY` | The password for everything: pages ask for it once at `/login` (then an httpOnly session cookie), scripts send it as an `x-mimir-key` header, never in the URL. Optional locally, **required in production**, where nothing is served without it. |
 
 Deploy on Vercel. `vercel.json` registers the 06:00 daily cron for the brief.
 
@@ -200,13 +200,23 @@ for in the prompt. Each of these exists because a real run broke it:
   the earlier result, the agent is warned before running out of turns, and the
   last turn withholds tools so the only thing left to do is answer
 
+## Security
+
+- **Every page and API route is behind the access key.** `proxy.ts` gates each request, and each page and route checks again next to its data, so one misconfigured layer doesn't expose anything
+- **Session cookie:** httpOnly, SameSite=Strict, and an HMAC of the key rather than the key, so a leaked cookie doesn't reveal the password. Changing the key signs everyone out
+- Cross-site requests carrying the cookie are refused, sign-in only redirects to paths on this site, and repeated wrong keys are slowed then blocked
+- The key is compared in constant time and is never accepted in a URL
+- **The agent cannot write SQL,** and the Postgres connector enforces a read-only session and a 10s query timeout on top of the read-only role, with agent-chosen time windows and funnel lengths capped
+- One investigation at a time, so quota can't be burned by repeated requests
+- Security headers on every response (no framing, no MIME sniffing, no cross-site referrers)
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-48 tests, no network and no model key needed. The loop's rules run against a
+53 tests, no network and no model key needed. The loop's rules run against a
 scripted fake model, so they are checked in milliseconds and repeatably.
 Covered: the significance test and its small-sample guard, anomaly detection,
 `locate_change`, history trimming, retry and quota handling, the Gemini

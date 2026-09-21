@@ -1,7 +1,8 @@
 import { listSources, isDemoOnly } from "@/lib/connectors/registry";
 import { describeProvider } from "@/lib/llm";
 import { store } from "@/lib/store";
-import { AccessKeyField } from "./access-key-field";
+import { signOut } from "../login/actions";
+import { requirePageAccess } from "@/lib/page-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +11,11 @@ export const dynamic = "force-dynamic";
  *
  * Everything backend-shaped that used to sit on the Overview page lives
  * here instead: which telemetry source is connected, which model would
- * run, where findings are stored, and the access key for this browser.
+ * run, where findings are stored, and signing out.
  * The main dashboard is player behaviour only.
  */
 export default async function SettingsPage() {
+  await requirePageAccess();
   const sources = listSources();
   const provider = describeProvider();
   const persistent = store().persistent;
@@ -107,14 +109,15 @@ export default async function SettingsPage() {
         </div>
 
         <div className="card">
-          <div className="card-head"><h2>Your access key</h2></div>
+          <div className="card-head"><h2>Session</h2></div>
           <div className="card-body">
             <p style={{ color: "var(--text-2)", marginTop: 0, marginBottom: 10, fontSize: 12.5 }}>
-              Kept only in this browser&apos;s local storage, sent as a header on Ask and
-              Investigation requests. Required in production if <code className="mono">MIMIR_ACCESS_KEY</code>{" "}
-              is set on the server; unnecessary for local development.
+              Signed in with a session cookie the page itself can&apos;t read. Changing{" "}
+              <code className="mono">MIMIR_ACCESS_KEY</code> on the server signs everyone out.
             </p>
-            <AccessKeyField />
+            <form action={signOut}>
+              <button className="btn sec" type="submit">Sign out</button>
+            </form>
           </div>
         </div>
       </div>

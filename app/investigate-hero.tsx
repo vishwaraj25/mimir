@@ -23,19 +23,12 @@ const EXAMPLES = [
 
 export function InvestigateHero() {
   const [question, setQuestion] = useState("");
-  const [accessKey, setAccessKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [steps, setSteps] = useState<TraceStep[]>([]);
   const [liveId, setLiveId] = useState<number | null>(null);
   const router = useRouter();
-
-  useEffect(() => {
-    try {
-      setAccessKey(localStorage.getItem("mimir_key") ?? "");
-    } catch {}
-  }, []);
 
   /**
    * Poll the trail while the agent works.
@@ -50,9 +43,14 @@ export function InvestigateHero() {
 
     const tick = async () => {
       try {
-        const r = await fetch(`/api/investigations/${liveId}`, {
-          headers: { "x-mimir-key": accessKey },
-        });
+        const r = await fetch(`/api/investigations/${liveId}`);
+        if (r.status === 401 || r.status === 503) {
+          // Not a transient blip: the session ended, so polling would spin forever.
+          stop = true;
+          setBusy(false);
+          setError(readableError("unauthorized"));
+          return;
+        }
         if (!r.ok) return;
         const data = await r.json();
         if (stop) return;
@@ -94,7 +92,7 @@ export function InvestigateHero() {
       stop = true;
       clearInterval(t);
     };
-  }, [liveId, accessKey, router]);
+  }, [liveId, router]);
 
   async function run(q?: string) {
     const text = (q ?? question).trim();
@@ -109,7 +107,7 @@ export function InvestigateHero() {
     try {
       const started = await fetch("/api/investigate", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-mimir-key": accessKey },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: text }),
       });
       const data = await started.json();
@@ -221,7 +219,8 @@ export function InvestigateHero() {
 
 function readableError(code: string): string {
   if (code === "mimir_access_key_not_set") return "Server has no MIMIR_ACCESS_KEY set.";
-  if (code === "unauthorized") return "Wrong access key — set it on the Settings page.";
+  if (code === "unauthorized") return "Your session has ended. Reload the page to sign in again.";
+  if (code === "investigation_already_running") return "An investigation is already running. Wait for it to finish.";
   if (code === "investigation_failed") return "The investigation failed. Check the model key on Settings.";
   return code ?? "Something went wrong.";
 }

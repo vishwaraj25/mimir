@@ -1,8 +1,10 @@
 import { store } from "@/lib/store";
+import { requirePageAccess } from "@/lib/page-auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function ExperimentsPage() {
+  await requirePageAccess();
   const rows = await store().listExperiments(50);
 
   return (

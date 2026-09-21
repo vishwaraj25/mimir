@@ -49,7 +49,7 @@ function generate(): DemoEvent[] {
   const events: DemoEvent[] = [];
   const now = new Date();
 
-  // 28 days of history, ~9 players a day.
+  // 28 days of history, 16-24 players a day.
   for (let dayOffset = 27; dayOffset >= 0; dayOffset--) {
     // MIMIR_DEMO_SCENARIO=flat removes the regression entirely, which is what
     // a false-premise question ("why did completion drop?") needs to be tested
@@ -86,7 +86,6 @@ function generate(): DemoEvent[] {
       // spike around x=22000 kills far more runs than it used to.
       const spikeZone = 22000;
       const skill = rand();
-      let reached = 0;
       // Must be a multiple of the 2000 step, or the final iteration never
       // lands on it and the boss is unreachable -- which is exactly the bug
       // this comment exists to stop someone reintroducing.
@@ -102,7 +101,6 @@ function generate(): DemoEvent[] {
         if (skill > 0.8) survive += 0.03; // strong players
 
         push("progress", { x });
-        reached = x;
 
         if (x % 8000 === 0) push("checkpoint_reached", { x });
 
@@ -142,7 +140,6 @@ function generate(): DemoEvent[] {
           });
         }
       }
-      void reached;
     }
   }
 

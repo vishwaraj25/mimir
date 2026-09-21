@@ -212,7 +212,10 @@ export async function executeTool(
   name: string,
   input: ToolInput,
 ): Promise<unknown> {
-  const days = (input.days_back as number) ?? 28;
+  // Bounded: the agent chooses these, and an unbounded window or funnel is
+  // just a way to ask for an expensive full-table scan.
+  const days = Math.max(1, Math.min(Math.trunc(Number(input.days_back)) || 28, 365));
+  if (Array.isArray(input.steps)) input.steps = input.steps.slice(0, 10);
   const range = rangeFromDays(days);
 
   switch (name) {
@@ -237,7 +240,7 @@ export async function executeTool(
     }
 
     case "compare_periods": {
-      const w = (input.window_days as number) ?? 7;
+      const w = Math.max(1, Math.min(Math.trunc(Number(input.window_days)) || 7, 180));
       const recent: TimeRange = { from: daysAgo(w), to: daysAgo(0) };
       const prior: TimeRange = { from: daysAgo(w * 2), to: daysAgo(w) };
       const [a, b] = await Promise.all([
@@ -359,7 +362,7 @@ export async function executeTool(
     }
 
     case "locate_change":
-      return await locateChange(source, input.event_name, (input.days_back as number) ?? 7);
+      return await locateChange(source, input.event_name, input.days_back === undefined ? 7 : days);
 
     case "user_timeline":
       return await source.userTimeline(input.user_id, 300);

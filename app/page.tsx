@@ -4,10 +4,12 @@ import { defaultSource, isDemoOnly } from "@/lib/connectors/registry";
 import { store } from "@/lib/store";
 import { InvestigateHero } from "./investigate-hero";
 import { RunBriefButton } from "./run-brief-button";
+import { requirePageAccess } from "@/lib/page-auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
+  await requirePageAccess();
   const source = defaultSource();
   const [overview, anomalies, brief] = await Promise.all([
     computeOverview(source),

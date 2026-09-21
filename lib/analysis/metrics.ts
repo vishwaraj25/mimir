@@ -78,23 +78,3 @@ export async function computeOverview(
     lastEventAt: schema.lastEventAt,
   };
 }
-
-/**
- * Conversion between two events over a window, with the raw counts kept so
- * a significance check can be run on them.
- */
-export async function conversionBetween(
-  source: EventSource,
-  fromEvent: string,
-  toEvent: string,
-  range: TimeRange,
-): Promise<{ from: number; to: number; ratePct: number | null }> {
-  const rows = await source.funnel([fromEvent, toEvent], range);
-  const a = rows[0]?.users ?? 0;
-  const b = rows[1]?.users ?? 0;
-  return {
-    from: a,
-    to: b,
-    ratePct: a > 0 ? Number(((b / a) * 100).toFixed(1)) : null,
-  };
-}

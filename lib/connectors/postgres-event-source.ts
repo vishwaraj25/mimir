@@ -33,8 +33,7 @@ export interface TableMapping {
     eventName: string;
     properties: string;
     occurredAt: string;
-    /** On the users table. */
-    userIdOnUsers: string;
+    /** On the users table: when each user was first seen. */
     userFirstSeen: string;
   };
 }
@@ -49,7 +48,6 @@ export const NIGHT_RUN_MAPPING: TableMapping = {
     eventName: "event_name",
     properties: "payload",
     occurredAt: "server_ts",
-    userIdOnUsers: "player_id",
     userFirstSeen: "first_seen_at",
   },
 };
@@ -83,6 +81,11 @@ export class PostgresEventSource implements EventSource {
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
       ssl: { rejectUnauthorized: true },
+      // The agent chooses what to aggregate. Two limits that hold even if the
+      // role it connects with was granted more than it should have been:
+      // a query can't run longer than 10s, and the session can't write.
+      statement_timeout: 10_000,
+      options: "-c default_transaction_read_only=on",
     });
   }
 
@@ -105,7 +108,10 @@ export class PostgresEventSource implements EventSource {
       const r = await this.pool.query(`SELECT 1 AS ok FROM ${this.e} LIMIT 1`);
       return { ok: true, detail: `reachable, ${r.rowCount ?? 0} row sampled` };
     } catch (err) {
-      return { ok: false, detail: (err as Error).message };
+      // Driver errors can name the host, database and user. Log the detail on
+      // the server; the page only needs to know it failed.
+      console.error(`source ${this.id} health check failed:`, (err as Error).message);
+      return { ok: false, detail: "unreachable (see server logs)" };
     }
   }
 
@@ -197,9 +203,7 @@ export class PostgresEventSource implements EventSource {
 
   async newUsers(range: TimeRange): Promise<number> {
     const u = ident(this.map.usersTable);
-    const idCol = ident(this.map.columns.userIdOnUsers);
     const firstSeen = ident(this.map.columns.userFirstSeen);
-    void idCol; // mapping validates it; not needed for a plain count
     const r = await this.pool.query(
       `SELECT COUNT(*)::int AS n FROM ${u}
        WHERE ${firstSeen} >= $1 AND ${firstSeen} < $2`,
@@ -370,7 +374,7 @@ export class PostgresEventSource implements EventSource {
         metricExpr = `COUNT(*)::int`;
     }
 
-    const limit = Math.min(spec.limit ?? 100, 500);
+    params.push(Math.max(1, Math.min(Math.trunc(Number(spec.limit) || 100), 500)));
     const r = await this.pool.query(
       `
       SELECT ${groupExpr} AS group_value, ${metricExpr} AS value
@@ -378,7 +382,7 @@ export class PostgresEventSource implements EventSource {
       WHERE ${where.join(" AND ")}
       GROUP BY 1
       ORDER BY 2 DESC NULLS LAST
-      LIMIT ${limit}
+      LIMIT $${params.length}
     `,
       params,
     );
