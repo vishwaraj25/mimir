@@ -193,6 +193,7 @@ for in the prompt. Each of these exists because a real run broke it:
   scores each value against what plain growth would predict, so a property that
   merely scaled with total volume is not blamed. If a change verdict never tried
   to locate anything it is sent back once
+- **No answer before a measurement.** A verdict is refused until a tool has measured something; if none ever does, it is shown as unverified
 - **Nothing is claimed that no tool showed.** With no located cause, the
   hypothesis is demoted to an "untested idea" in the summary, the proposed
   experiment is dropped, and confidence is capped
@@ -216,7 +217,7 @@ for in the prompt. Each of these exists because a real run broke it:
 npm test
 ```
 
-53 tests, no network and no model key needed. The loop's rules run against a
+55 tests, no network and no model key needed. The loop's rules run against a
 scripted fake model, so they are checked in milliseconds and repeatably.
 Covered: the significance test and its small-sample guard, anomaly detection,
 `locate_change`, history trimming, retry and quota handling, the Gemini
@@ -236,11 +237,23 @@ Working: the connector abstraction, the agent loop, investigations with full
 trails, insights, proposed experiments, the schema explorer, the morning brief,
 and the tests above.
 
-Verified live, against the demo data: on "why did completion drop?" the agent
-finds the planted cause (a death spike at x=22,000, 4 to 49) in 7 tool calls,
-twice. Five varied questions were also run; three failed and were fixed as
-described above. Those three fixes have been tested offline but **not yet
-re-run against a real model**.
+Verified live, against the demo data and checked against the data's real
+values, not just read for plausibility:
+
+| Question | Result |
+|---|---|
+| Why did completion drop? | Finds the planted cause (deaths at x=22,000, 4 to 49), three runs out of three |
+| Where do players give up? | Same spike, correctly located |
+| Is the shield used? | 222 of 231 players: correct, and answered as a state question |
+| Which weapon is picked up least? | double_mg (134): correct, and says the six are too close to call |
+| Why did completion drop? (on data where it didn't) | Says it did not drop (64.8% vs 65.5%, not significant) |
+
+Every one of these failed at some point and was fixed in code rather than
+in the prompt: the weapon question, for instance, first came back with
+invented figures ("jetpack, 2%") after measuring nothing, which is why a
+verdict is now refused until a tool has actually measured something.
+
+To run one yourself: `npm run investigate -- "your question"`.
 
 Not built: saved funnels and cohorts as stored objects, and experiment result
 tracking (the schema is there, the measurement loop is not). Not yet done:

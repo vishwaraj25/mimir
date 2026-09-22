@@ -31,6 +31,9 @@ const tool = (name: string, input: Record<string, unknown> = {}): LLMResponse =>
   toolCalls: [{ id: `${name}-${Math.random()}`, name, input }],
 });
 
+/** A real measurement, so the "measure first" rule is satisfied. */
+const measure = () => tool("compare_periods", { steps: ["run_start", "boss_defeated"] });
+
 const verdict = (over: Record<string, unknown>): LLMResponse => ({
   text:
     "```json\n" +
@@ -57,14 +60,15 @@ async function run(script: LLMResponse[], question = "Why did completion drop?")
 
 test("a change verdict that never tried to locate the change is sent back once", async () => {
   const { provider, result } = await run([
-    verdict({}), // offered straight away
+    measure(),
+    verdict({}), // offered without locating anything
     tool("locate_change", { event_name: "player_died" }),
     verdict({}),
   ]);
-  assert.equal(provider.calls.length, 3, "the first verdict should have been refused");
-  const nudge = provider.calls[1].messages.at(-1);
+  assert.equal(provider.calls.length, 4, "the first verdict should have been refused");
+  const nudge = provider.calls[2].messages.at(-1);
   assert.ok(nudge && nudge.role === "user" && /locate_change/.test(nudge.text));
-  assert.ok(provider.calls[1].hadTools, "tools must be available again after the nudge");
+  assert.ok(provider.calls[2].hadTools, "tools must be available again after the nudge");
   // It located the spike on the demo data, so the cause stands.
   assert.equal(result.confidence, "high");
   assert.ok(result.hypothesis);
@@ -73,7 +77,7 @@ test("a change verdict that never tried to locate the change is sent back once",
 
 test("with nothing located, a change verdict cannot keep an invented cause or experiment", async () => {
   // Never calls a locating tool, however often it is asked.
-  const { result } = await run([verdict({}), verdict({}), verdict({}), verdict({})]);
+  const { result } = await run([measure(), verdict({}), verdict({}), verdict({}), verdict({})]);
   assert.equal(result.hypothesis, "", "an untested idea must not be reported as a hypothesis");
   assert.equal(result.experiment, null, "no experiment on an untested cause");
   assert.equal(result.confidence, "medium", "high confidence describes the cause, which is unproven");
@@ -95,10 +99,13 @@ test("locate_change that finds nothing also strips the cause", async () => {
 
 test("a state question is never pushed to look for a change", async () => {
   const { provider, result } = await run(
-    [verdict({ question_type: "state", hypothesis: "", experiment: null, confidence: "high" })],
+    [
+      tool("segment_event", { event_name: "item_collected", property: "item" }),
+      verdict({ question_type: "state", hypothesis: "", experiment: null, confidence: "high" }),
+    ],
     "Which weapon is picked up least?",
   );
-  assert.equal(provider.calls.length, 1, "no gate on a question with nothing to localise");
+  assert.equal(provider.calls.length, 2, "no gate on a question with nothing to localise");
   assert.equal(result.confidence, "high");
 });
 
@@ -117,10 +124,39 @@ test("an exact repeat of a tool call is refused, not re-run", async () => {
 
 test("an empty reply is asked again instead of recorded as the verdict", async () => {
   const { provider, result } = await run([
+    measure(),
     { text: "", toolCalls: [] },
     verdict({ question_type: "state", hypothesis: "", experiment: null }),
   ]);
-  assert.equal(provider.calls.length, 2);
-  assert.ok(!provider.calls[1].hadTools, "the re-ask is a no-tools turn, so it can only answer");
+  assert.equal(provider.calls.length, 3);
+  assert.ok(!provider.calls[2].hadTools, "the re-ask is a no-tools turn, so it can only answer");
   assert.equal(result.headline, "h");
+});
+
+test("a verdict before anything was measured is sent back once for a measurement", async () => {
+  // The real failure: describe_schema alone, then invented pickup figures.
+  const { provider, result } = await run(
+    [
+      tool("describe_schema"),
+      verdict({ question_type: "state", headline: "Jetpack is least, 2%", hypothesis: "", experiment: null }),
+      tool("segment_event", { event_name: "item_collected", property: "item" }),
+      verdict({ question_type: "state", headline: "double_mg is least", hypothesis: "", experiment: null }),
+    ],
+    "Which weapon is picked up least?",
+  );
+  assert.equal(provider.calls.length, 4, "the first verdict should have been refused");
+  const nudge = provider.calls[2].messages.at(-1);
+  assert.ok(nudge && nudge.role === "user" && /not measured anything/.test(nudge.text));
+  assert.ok(provider.calls[2].hadTools, "tools must be available again");
+  assert.equal(result.headline, "double_mg is least");
+});
+
+test("a verdict that still measured nothing is marked unverified, not presented as a finding", async () => {
+  const fabricated = verdict({ question_type: "state", headline: "Jetpack is least, 2%", confidence: "high" });
+  const { result } = await run([tool("describe_schema"), fabricated, fabricated, fabricated], "Which weapon is picked up least?");
+  assert.match(result.headline, /^Unverified/);
+  assert.equal(result.confidence, "insufficient_data");
+  assert.deepEqual(result.insights, []);
+  assert.equal(result.experiment, null);
+  assert.match(result.summary, /Jetpack is least, 2%/, "the model's answer is kept, but labelled unverified");
 });

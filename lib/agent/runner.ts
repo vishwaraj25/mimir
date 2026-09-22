@@ -234,6 +234,16 @@ export async function runInvestigationLoop(
 
   /** Set when a reply came back without a usable verdict and was re-asked. */
   let verdictRequested = false;
+  /**
+   * Whether any tool actually measured something. describe_schema only lists
+   * what exists; it has no counts. Observed: asked which weapon is picked up
+   * least, the agent called describe_schema alone and answered with invented
+   * figures ("jetpack, 2%") -- the real least was double_mg, and the jetpack
+   * was second MOST.
+   */
+  let measured = false;
+  let measureNudged = false;
+
   /** Whether the agent ever TRIED to establish where the change came from. */
   let localiseAttempted = false;
   /** Whether a tool result actually pointed at a place. */
@@ -322,6 +332,30 @@ export async function runInvestigationLoop(
         });
       }
 
+      // No verdict before a measurement. Checked before anything else, since
+      // a verdict with nothing measured behind it has no numbers to trust.
+      if (
+        response.toolCalls.length === 0 &&
+        parseVerdict(response.text) &&
+        !measured &&
+        !measureNudged &&
+        turnsLeft > 2
+      ) {
+        measureNudged = true;
+        verdictRequested = false; // tools must be available again
+        console.warn("verdict offered before anything was measured; sending it back once");
+        messages.push({ role: "assistant", text: response.text, toolCalls: [] });
+        messages.push({
+          role: "user",
+          text:
+            "You have not measured anything yet: describe_schema only lists which events " +
+            "and properties exist, it has no counts. Every number in your verdict has to " +
+            "come from a tool result. Measure first (segment_event, funnel, aggregate, " +
+            "compare_periods), then answer from what those return.",
+        });
+        continue;
+      }
+
       // A verdict on a change nobody located is a guess with a number in it.
       // Observed twice: it measured the drop correctly, never asked where
       // the loss happened, and concluded "the boss" with high confidence.
@@ -393,7 +427,17 @@ export async function runInvestigationLoop(
         // model. Observed: with nothing located, it still offered invented
         // causes ("enemy attacks softened or shield cooldown increased") and
         // an experiment built on them, at high confidence.
-        if (verdict.question_type === "change" && !causeFound) {
+        if (!measured) {
+          const original = `${verdict.headline ?? ""} ${verdict.summary ?? ""}`.trim();
+          verdict.headline = "Unverified: no measurement was made before answering.";
+          verdict.summary =
+            `No tool that measures the data was called, so none of the figures the ` +
+            `model gave can be trusted. Its unverified answer was: ${original}`;
+          verdict.confidence = "insufficient_data";
+          verdict.hypothesis = "";
+          verdict.experiment = null;
+          verdict.insights = [];
+        } else if (verdict.question_type === "change" && !causeFound) {
           if (verdict.hypothesis) {
             verdict.summary =
               `${verdict.summary ?? ""} Untested idea (nothing in the data located a cause): ${verdict.hypothesis}`.trim();
@@ -499,6 +543,7 @@ export async function runInvestigationLoop(
             isError = true;
           }
           if (!isError) {
+            if (call.name !== "describe_schema") measured = true;
             if (
               call.name === "locate_change" ||
               (call.name === "aggregate" && (call.input as any)?.compare_to_prior)
