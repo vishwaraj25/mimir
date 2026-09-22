@@ -10,9 +10,15 @@ import { checkAccess } from "./lib/auth";
  * Before this existed only /api/* checked the key, while every page read
  * behavioural data and findings server-side with no check at all -- anyone
  * with the URL could read everything.
+ *
+ * /demo is the one deliberate exception: a public walkthrough that only
+ * ever reads the built-in synthetic source and has no "ask Mimir" action,
+ * so it exposes no real data and can't spend model quota. See app/demo.
  */
 export async function proxy(request: NextRequest) {
-  if (request.nextUrl.pathname === "/login") return NextResponse.next();
+  if (request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/demo") {
+    return NextResponse.next();
+  }
 
   const access = await checkAccess(request);
   if (access.ok) return NextResponse.next();

@@ -131,13 +131,13 @@ export default async function OverviewPage() {
   );
 }
 
-function pctDelta(before: number, after: number): { pct: number; dir: "up" | "down" | "flat" } {
+export function pctDelta(before: number, after: number): { pct: number; dir: "up" | "down" | "flat" } {
   if (before === 0) return { pct: after > 0 ? 100 : 0, dir: after > 0 ? "up" : "flat" };
   const pct = Number((((after - before) / before) * 100).toFixed(0));
   return { pct, dir: pct > 0 ? "up" : pct < 0 ? "down" : "flat" };
 }
 
-function MetricCard({
+export function MetricCard({
   k, v, delta, sparkline, sparkPeak, accent,
 }: {
   k: string; v: number; delta: { pct: number; dir: "up" | "down" | "flat" };
@@ -163,7 +163,7 @@ function MetricCard({
   );
 }
 
-function StatCard({ k, v, note }: { k: string; v: number; note?: string }) {
+export function StatCard({ k, v, note }: { k: string; v: number; note?: string }) {
   return (
     <div className="mcard">
       <div className="mcard-top"><span className="k">{k}</span></div>

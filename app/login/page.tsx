@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { MimirHead } from "../components/mimir-head";
 import { LoginForm } from "./login-form";
 
@@ -19,6 +20,9 @@ export default async function LoginPage({
             </div>
           </div>
           <LoginForm next={next ?? "/"} />
+          <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-3)" }}>
+            No key? <Link href="/demo">See a public demo</Link> on synthetic data.
+          </div>
         </div>
       </div>
     </div>
