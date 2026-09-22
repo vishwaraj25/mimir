@@ -1,8 +1,9 @@
+import { after } from "next/server";
 import { checkAccess, sameOrigin, unauthorized } from "@/lib/auth";
 import { runInvestigationLoop, startInvestigation } from "@/lib/agent/runner";
 import { defaultSource } from "@/lib/connectors/registry";
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 let running = false;
 
@@ -17,10 +18,13 @@ let running = false;
  * /api/investigations/[id] for steps as they land, and the loop runs on
  * past this response.
  *
- * On a serverless host the function may be frozen once the response is
- * sent; if this is deployed somewhere that does that, the loop wants a
- * platform keep-alive (Vercel's waitUntil) or a queue. Running as a normal
- * Node server, it simply keeps going.
+ * On Vercel the function is frozen the instant the response is sent, so
+ * the loop is scheduled with next/server's `after()`, which keeps the
+ * function alive for exactly this kind of post-response work. It is still
+ * bounded by `maxDuration` (60s on Hobby) -- a real investigation is
+ * measured at 44-112s per question, so a long one can still be cut off
+ * mid-run on Hobby. Running as a normal Node server, `after()` is a no-op
+ * wrapper and the loop simply keeps going with no such limit.
  */
 export async function POST(request: Request) {
   const auth = await checkAccess(request);
@@ -69,11 +73,13 @@ export async function POST(request: Request) {
   // Failures land on the investigation row itself (status 'failed' plus the
   // message), which is what the client is already polling -- so nothing is
   // swallowed by not awaiting here.
-  void runInvestigationLoop(investigationId, { sourceId, question })
-    .catch((err) => console.error("investigation failed:", (err as Error).message))
-    .finally(() => {
-      running = false;
-    });
+  after(() =>
+    runInvestigationLoop(investigationId, { sourceId, question })
+      .catch((err) => console.error("investigation failed:", (err as Error).message))
+      .finally(() => {
+        running = false;
+      }),
+  );
 
   return Response.json({ investigationId, status: "running" });
 }

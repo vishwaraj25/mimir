@@ -22,7 +22,10 @@ export interface Anomaly {
   note: string;
 }
 
-const MIN_VOLUME = 20; // per window, below which a swing is noise
+// Measured against Night Run's real traffic (19 players): most events run
+// single digits per week, so 20 never cleared for anything. 5 still rejects
+// true 0-4 noise but lets real week-over-week swings register.
+const MIN_VOLUME = 5; // per window, below which a swing is noise
 const MIN_CHANGE_PCT = 25;
 
 export async function detectAnomalies(
